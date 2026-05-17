@@ -91,6 +91,11 @@ def build(clean: bool) -> int:
         f'--output-dir={OUTPUT_DIR}',
         '--output-filename=DLib.exe',
         '--remove-output',     # delete intermediate build files
+        # Skip link-time optimisation. Cuts C-compile time by 30-50% at the
+        # cost of a slightly bigger exe — worth it everywhere, critical on
+        # GitHub's 4-vCPU windows-latest runners where LTO blows past the
+        # 60-min default workflow timeout.
+        '--lto=no',
         '--nofollow-import-to=tkinter',  # tkinter pulls a lot of Tcl/Tk; pywebview replaces it
         '--nofollow-import-to=test',
         '--nofollow-import-to=unittest',
