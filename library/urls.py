@@ -30,6 +30,8 @@ urlpatterns = [
     path('api/pick-folder/', views.pick_folder_dialog, name='pick_folder'),
     path('api/pick-file/', views.pick_file_dialog, name='pick_file'),
     path('api/settings/save/', views.save_settings, name='save_settings'),
+    path('api/settings/export/', views.export_data, name='export_data'),
+    path('api/settings/import/', views.import_data, name='import_data'),
     path('api/games/<int:pk>/bad/', views.toggle_bad, name='toggle_bad'),
     path('api/games/<int:pk>/favorite/', views.toggle_favorite, name='toggle_favorite'),
 

@@ -1,18 +1,26 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 from datetime import timezone as dt_timezone
 from pathlib import Path
 from typing import Iterable
 
+from django.conf import settings as django_settings
 from django.contrib import messages
+from django.core import serializers
+from django.core.management import call_command
+from django.db import transaction
 from django.db.models import Q
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -20,7 +28,9 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import AppSettings, Creator, Game, GameAlias, ManualGameTag, Tag
+from .models import (
+    AppSettings, Creator, Game, GameAlias, ManualGameTag, PlaySession, Tag,
+)
 from .services import (
     dlsite_client,
     f95zone_client,
@@ -1021,6 +1031,192 @@ def api_link(request):
     primary_game.save(update_fields=['updated_at'])
 
     return JsonResponse({'ok': True, 'game_id': primary_game.pk, 'noop': False})
+
+
+# ---------------------------------------------------------------------------
+# Export / import: bundle DB + media + settings into a portable .dlib zip
+# so the user can move a library between machines or back it up.
+# ---------------------------------------------------------------------------
+
+EXPORT_SCHEMA_VERSION = 1
+EXPORT_APP_VERSION = '0.1.0'
+
+
+def _stream_then_unlink(path: str):
+    """Yield a file's bytes in chunks, then delete the file. Lets us write
+    big exports to a tempfile and stream them out without holding the whole
+    archive in RAM."""
+    try:
+        with open(path, 'rb') as fh:
+            while True:
+                chunk = fh.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+@require_POST
+def export_data(request):
+    """Build and stream a ``.dlib`` archive containing:
+
+    * ``manifest.json`` — schema version, app version, export timestamp, counts
+    * ``data.json``     — Django dumpdata for the ``library`` app
+                          (Game, Tag, Creator, AppSettings, GameAlias,
+                           ManualGameTag, PlaySession)
+    * ``media/...``     — every file under MEDIA_ROOT (covers + samples)
+    """
+    if process_tracker.active_games():
+        return HttpResponse(
+            'Cannot export while games are running — close them first.',
+            status=409,
+        )
+
+    tmp = tempfile.NamedTemporaryFile(suffix='.dlib', delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    try:
+        with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            manifest = {
+                'schema_version': EXPORT_SCHEMA_VERSION,
+                'app_version': EXPORT_APP_VERSION,
+                'exported_at': timezone.now().isoformat(),
+                'counts': {
+                    'games': Game.objects.count(),
+                    'tags': Tag.objects.count(),
+                    'creators': Creator.objects.count(),
+                    'play_sessions': sum(g.play_sessions.count() for g in Game.objects.all()),
+                    'aliases': GameAlias.objects.count(),
+                    'manual_tags': ManualGameTag.objects.count(),
+                },
+            }
+            zf.writestr('manifest.json', json.dumps(manifest, indent=2))
+
+            data_buf = io.StringIO()
+            call_command('dumpdata', 'library',
+                         indent=2, stdout=data_buf,
+                         use_natural_foreign_keys=False,
+                         use_natural_primary_keys=False)
+            zf.writestr('data.json', data_buf.getvalue())
+
+            media_root = Path(django_settings.MEDIA_ROOT)
+            if media_root.is_dir():
+                for fp in media_root.rglob('*'):
+                    if fp.is_file():
+                        rel = fp.relative_to(media_root)
+                        zf.write(fp, f'media/{rel.as_posix()}')
+
+        filename = f'DLib-export-{timezone.now().strftime("%Y%m%d-%H%M%S")}.dlib'
+        size = os.path.getsize(tmp_path)
+        response = StreamingHttpResponse(
+            _stream_then_unlink(tmp_path),
+            content_type='application/octet-stream',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['Content-Length'] = str(size)
+        return response
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        log.exception('export_data failed')
+        return HttpResponse('Export failed — see dlib.log.', status=500)
+
+
+@require_POST
+def import_data(request):
+    """Wipe + replace library state from an uploaded ``.dlib`` bundle.
+
+    DESTRUCTIVE — drops all Games, Tags, Creators, GameAlias, ManualGameTag,
+    PlaySession, AppSettings rows and the media/ tree before extracting the
+    archive's contents. The form on the settings page wraps it in a
+    confirm() to make sure the user means it.
+    """
+    upload = request.FILES.get('file')
+    if upload is None:
+        return HttpResponse('No file uploaded (expected field "file").', status=400)
+
+    if process_tracker.active_games():
+        return HttpResponse(
+            'Cannot import while games are running — close them first.',
+            status=409,
+        )
+
+    try:
+        with zipfile.ZipFile(upload) as zf:
+            try:
+                manifest = json.loads(zf.read('manifest.json').decode('utf-8'))
+            except (KeyError, json.JSONDecodeError) as exc:
+                return HttpResponse(
+                    f'Not a valid DLib export (manifest.json missing or invalid: {exc}).',
+                    status=400,
+                )
+
+            version = manifest.get('schema_version')
+            if version != EXPORT_SCHEMA_VERSION:
+                return HttpResponse(
+                    f'Export schema version {version} is incompatible with this '
+                    f'DLib (expected {EXPORT_SCHEMA_VERSION}).',
+                    status=400,
+                )
+
+            try:
+                data_json = zf.read('data.json').decode('utf-8')
+            except KeyError:
+                return HttpResponse('Export missing data.json.', status=400)
+
+            # Wipe existing tables in a single transaction. AppSettings is a
+            # singleton — delete + reload so the imported one wins.
+            with transaction.atomic():
+                PlaySession.objects.all().delete()
+                ManualGameTag.objects.all().delete()
+                GameAlias.objects.all().delete()
+                Game.objects.all().delete()
+                Tag.objects.all().delete()
+                Creator.objects.all().delete()
+                AppSettings.objects.all().delete()
+
+                for obj in serializers.deserialize('json', data_json):
+                    obj.save()
+
+            # Replace media tree with the archive's media/.
+            media_root = Path(django_settings.MEDIA_ROOT)
+            if media_root.is_dir():
+                for sub in ('covers', 'samples'):
+                    target = media_root / sub
+                    if target.is_dir():
+                        shutil.rmtree(target, ignore_errors=True)
+            media_root.mkdir(parents=True, exist_ok=True)
+
+            for name in zf.namelist():
+                if not name.startswith('media/') or name.endswith('/'):
+                    continue
+                rel = name[len('media/'):]
+                if not rel:
+                    continue
+                dst = media_root / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(name) as src, open(dst, 'wb') as out:
+                    shutil.copyfileobj(src, out)
+
+    except zipfile.BadZipFile:
+        return HttpResponse('Not a valid .dlib archive (bad zip).', status=400)
+    except Exception:
+        log.exception('import_data failed')
+        return HttpResponse('Import failed — see dlib.log.', status=500)
+
+    if request.headers.get('HX-Request'):
+        return HttpResponse(
+            '<div class="toast toast-ok" '
+            'x-init="setTimeout(()=>$el.remove(),3500)">Import complete.</div>'
+        )
+    return redirect('library:settings')
 
 
 @csrf_exempt
