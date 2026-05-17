@@ -97,6 +97,12 @@ extension/             Browser extension (MV3)
 
 ## License
 
-Personal project — pick a license if you redistribute.
+[MIT](LICENSE). Use it, modify it, ship it in your own thing — just keep
+the copyright + license notice. No warranty, no liability.
+
+All third-party dependencies bundled at build time keep their own
+licenses (Django/pywebview/psutil/dlsite-async = BSD/MIT, waitress =
+ZPL, aiohttp = Apache 2.0, etc.) — running an installer doesn't change
+those terms.
 
 [dlsite-async]: https://github.com/bhrevol/dlsite-async
