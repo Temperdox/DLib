@@ -1,0 +1,53 @@
+{
+    "manifest_version": 3,
+    "name": "DLib Library Overlay",
+    "version": "0.1.0",
+    "description": "Overlay your DLib library state (downloaded / bad / running) on F95Zone and DLsite game links.",
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "dlib-overlay@dlib.local",
+            "strict_min_version": "121.0"
+        }
+    },
+    "host_permissions": [
+        "http://127.0.0.1:8000/*",
+        "http://localhost:8000/*",
+        "https://f95zone.to/*",
+        "https://www.dlsite.com/*"
+    ],
+    "permissions": [
+        "storage"
+    ],
+    "background": {
+        "service_worker": "background.js",
+        "type": "module"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://f95zone.to/*",
+                "https://www.dlsite.com/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "css": [
+                "styles.css"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "DLib Library Overlay",
+        "default_icon": {
+            "16": "icon-16.png",
+            "48": "icon-48.png"
+        }
+    },
+    "icons": {
+        "16": "icon-16.png",
+        "48": "icon-48.png",
+        "128": "icon-128.png"
+    }
+}

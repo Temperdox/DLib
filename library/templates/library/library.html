@@ -1,0 +1,164 @@
+{% extends 'library/base.html' %}
+{% load static %}
+
+{% block title %}DLib — Library{% endblock %}
+
+{% block body %}
+<div x-data="{ showAdd: false }">
+    <header class="topbar">
+        <a class="brand" href="{% url 'library:library' %}">
+            <span class="dot"></span>
+            <span>DLib</span>
+        </a>
+        <form method="get" action="{% url 'library:library' %}" style="flex:1; display:flex; gap:10px;">
+            <input class="search-input" type="search" name="q" value="{{ query }}"
+                   placeholder="Search by title, creator, tag, or product id…"
+                   hx-get="{% url 'library:games_grid_partial' %}"
+                   hx-trigger="input changed delay:250ms, search"
+                   hx-target="#games-grid"
+                   hx-swap="outerHTML"
+                   hx-include="[name=sort],[name=installed],[name=source],[name=show_bad],[name=favorites_only]">
+            <select name="sort" class="search-input sort-select"
+                    hx-get="{% url 'library:games_grid_partial' %}"
+                    hx-trigger="change"
+                    hx-target="#games-grid"
+                    hx-swap="outerHTML"
+                    hx-include="[name=q],[name=installed],[name=source],[name=show_bad],[name=favorites_only]">
+                {% for key, choice in sort_choices.items %}
+                    <option value="{{ key }}" {% if sort == key %}selected{% endif %}>{{ choice.1 }}</option>
+                {% endfor %}
+            </select>
+            <input type="hidden" name="installed" value="{{ installed_filter }}">
+            <input type="hidden" name="source" value="{{ source_filter }}">
+            <input type="hidden" name="show_bad" value="{% if show_bad %}1{% endif %}">
+            <input type="hidden" name="favorites_only" value="{% if favorites_only %}1{% endif %}">
+        </form>
+        <div class="spacer"></div>
+        <a class="btn btn-ghost btn-icon" href="{% url 'library:settings' %}" title="Settings">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+        </a>
+        <button class="btn btn-primary" @click="showAdd = true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3">
+                <path d="M12 5v14M5 12h14"/>
+            </svg>
+            Add Game
+        </button>
+    </header>
+
+    <div class="filter-bar">
+        <span class="label">Installed</span>
+        <div class="chip-group">
+            <button type="button" class="chip {% if not installed_filter %}active{% endif %}"
+                    onclick="setFilter('installed', '')">All</button>
+            <button type="button" class="chip {% if installed_filter == '1' %}active{% endif %}"
+                    onclick="setFilter('installed', '1')">Downloaded</button>
+            <button type="button" class="chip {% if installed_filter == '0' %}active{% endif %}"
+                    onclick="setFilter('installed', '0')">Not downloaded</button>
+        </div>
+        <span class="label">Source</span>
+        <div class="chip-group">
+            <button type="button" class="chip {% if not source_filter %}active{% endif %}"
+                    onclick="setFilter('source', '')">All</button>
+            <button type="button" class="chip {% if source_filter == 'dlsite' %}active{% endif %}"
+                    onclick="setFilter('source', 'dlsite')">DLsite</button>
+            <button type="button" class="chip {% if source_filter == 'f95zone' %}active{% endif %}"
+                    onclick="setFilter('source', 'f95zone')">F95Zone</button>
+        </div>
+        <label class="toggle" style="margin-left: 8px;">
+            <input type="checkbox" {% if favorites_only %}checked{% endif %}
+                   onchange="setFilter('favorites_only', this.checked ? '1' : '')">
+            <span>★ Favorites only</span>
+        </label>
+        <label class="toggle" style="margin-left: 8px;">
+            <input type="checkbox" {% if show_bad %}checked{% endif %}
+                   onchange="setFilter('show_bad', this.checked ? '1' : '')">
+            <span>Show bad</span>
+        </label>
+        <span class="count-pill" id="game-count">{{ games|length }} game{{ games|length|pluralize }}</span>
+    </div>
+
+    {% include 'library/partials/_grid.html' %}
+
+    <!-- Add game modal — always in the DOM so HTMX binds at page load, but
+         hidden until showAdd flips true. (x-template/x-if delays mount, which
+         can leave HTMX without a chance to bind the form.) -->
+    <div x-show="showAdd" x-cloak>
+        {% include 'library/partials/_add_game_modal.html' %}
+    </div>
+
+    <!-- Exe picker modal slot (filled in by HTMX) -->
+    <div id="exe-picker-slot"></div>
+
+    <!-- Invisible poller: hits /api/changes/ every 4s, compares the JSON to
+         the last-seen value, and triggers a grid refresh when something
+         changed (e.g. browser extension just added a game). -->
+    <div style="display:none"
+         hx-get="{% url 'library:api_changes' %}"
+         hx-trigger="load delay:4s, every 4s"
+         hx-swap="none"
+         hx-on::after-request="dlibCheckChanges(event.detail.xhr)"></div>
+</div>
+
+<script>
+    // Auto-refresh: when /api/changes/ reports the library state has changed
+    // (added / edited / removed game from any source — including the browser
+    // extension), reload the grid in place. Filters are preserved.
+    let dlibLastChangeToken = null;
+    window.dlibCheckChanges = function (xhr) {
+        if (!xhr || xhr.status !== 200) return;
+        const token = xhr.responseText;
+        if (dlibLastChangeToken === null) {
+            dlibLastChangeToken = token;
+            return;
+        }
+        if (dlibLastChangeToken === token) return;
+        dlibLastChangeToken = token;
+        // Same value collection as setFilter() — keep grid swap respectful
+        // of whatever the user has typed / chosen.
+        const values = {
+            q: (document.querySelector('[name=q]') || {}).value || '',
+            sort: (document.querySelector('[name=sort]') || {}).value || '',
+            installed: (document.querySelector('[name=installed]') || {}).value || '',
+            source: (document.querySelector('[name=source]') || {}).value || '',
+            show_bad: (document.querySelector('[name=show_bad]') || {}).value || '',
+            favorites_only: (document.querySelector('[name=favorites_only]') || {}).value || '',
+        };
+        htmx.ajax('GET', '{% url "library:games_grid_partial" %}', {
+            target: '#games-grid',
+            swap: 'outerHTML',
+            values: values,
+        });
+    };
+
+    function setFilter(name, value) {
+        var input = document.querySelector('[name=' + name + ']');
+        if (input) input.value = value;
+        var values = {
+            q: document.querySelector('[name=q]').value,
+            sort: document.querySelector('[name=sort]').value,
+            installed: document.querySelector('[name=installed]').value,
+            source: document.querySelector('[name=source]').value,
+            show_bad: document.querySelector('[name=show_bad]').value,
+            favorites_only: document.querySelector('[name=favorites_only]').value,
+        };
+        htmx.ajax('GET', '{% url "library:games_grid_partial" %}', {
+            target: '#games-grid',
+            swap: 'outerHTML',
+            values: values,
+        });
+        var url = new URL(window.location);
+        if (value) url.searchParams.set(name, value);
+        else url.searchParams.delete(name);
+        history.replaceState(null, '', url);
+        // Active state for the clicked chip's neighbours only.
+        var grp = event.target.closest('.chip-group');
+        if (grp) {
+            grp.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+    }
+</script>
+{% endblock %}

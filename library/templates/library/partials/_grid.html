@@ -1,0 +1,11 @@
+{% load library_extras %}
+<div id="games-grid" class="grid">
+    {% for game in games %}
+        {% include 'library/partials/_game_card.html' %}
+    {% empty %}
+        <div class="empty-state" style="grid-column: 1 / -1;">
+            <div class="big">📚</div>
+            <div>No games yet. Click <strong>+ Add Game</strong> and paste a DLsite URL to get started.</div>
+        </div>
+    {% endfor %}
+</div>

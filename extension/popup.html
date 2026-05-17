@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>DLib</title>
+    <style>
+        body {
+            width: 300px;
+            margin: 0;
+            padding: 14px 16px;
+            background: #15171b;
+            color: #e6e8eb;
+            font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+            font-size: 13px;
+        }
+        .brand {
+            display: flex; align-items: center; gap: 8px;
+            font-weight: 800; font-size: 16px;
+            margin-bottom: 10px;
+        }
+        .brand .dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: #f04848; box-shadow: 0 0 6px #f04848;
+        }
+        .row {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 10px;
+            border-radius: 6px;
+            background: #1c1f25;
+            border: 1px solid #2c313b;
+            margin-bottom: 8px;
+        }
+        .row .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .row.ok    { color: #34c759; }
+        .row.ok .dot    { background: #34c759; box-shadow: 0 0 6px #34c759; }
+        .row.down  { color: #ff3b30; }
+        .row.down .dot  { background: #ff3b30; box-shadow: 0 0 6px #ff3b30; }
+        .row.checking { color: #9aa2af; }
+        .row.checking .dot { background: #9aa2af; }
+        .meta {
+            color: #9aa2af;
+            font-size: 12px;
+            line-height: 1.6;
+            padding: 0 2px;
+        }
+        .meta code {
+            color: #e6e8eb;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 11px;
+        }
+        button.btn {
+            display: block;
+            width: 100%;
+            margin-top: 6px;
+            padding: 7px 12px;
+            background: #f04848;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        button.btn.secondary {
+            background: #2c313b; color: #e6e8eb;
+            border: 1px solid #3a4150;
+        }
+        button.btn:hover:not([disabled]) { filter: brightness(1.1); }
+        button.btn[disabled] { background: #2c313b; color: #6c7380; cursor: not-allowed; }
+        .key {
+            display: flex; flex-direction: column; gap: 4px;
+            margin-top: 12px;
+            font-size: 11px;
+            border-top: 1px solid #2c313b;
+            padding-top: 10px;
+        }
+        .key-row {
+            display: flex; align-items: center; gap: 8px;
+            color: #9aa2af;
+        }
+        .swatch {
+            display: inline-block;
+            width: 38px; text-align: center;
+            padding: 2px 4px;
+            border-radius: 3px;
+            color: white;
+            font-weight: 800;
+            font-size: 9px;
+            letter-spacing: 0.3px;
+        }
+        .swatch.dashed { border: 1px dashed rgba(255,255,255,0.5); padding: 1px 3px; }
+    </style>
+</head>
+<body>
+    <div class="brand"><span class="dot"></span><span>DLib Overlay</span></div>
+
+    <div id="status" class="row checking">
+        <span class="dot"></span>
+        <span id="status-text">Checking server…</span>
+    </div>
+
+    <div class="meta" id="server-meta" style="display:none;">
+        Library: <code id="stat-games">—</code> games &middot;
+        Sources: <code id="stat-sources">—</code><br>
+        API: <code id="stat-base">—</code>
+    </div>
+
+    <div class="row ok" id="cache-row">
+        <span class="dot"></span>
+        <span id="cache-text">Cache: —</span>
+    </div>
+
+    <button id="open-btn" class="btn" disabled>Open DLib</button>
+    <button id="clear-btn" class="btn secondary">Clear cache</button>
+
+    <div class="key">
+        <div class="key-row"><span class="swatch" style="background:#2faa55;">DL</span> Downloaded (in library + exe set)</div>
+        <div class="key-row"><span class="swatch" style="background:#4a8fd6;">LIB</span> In library, not installed</div>
+        <div class="key-row"><span class="swatch" style="background:#e23939;">BAD</span> Marked as bad / don't download</div>
+        <div class="key-row"><span class="swatch" style="background:#e09020;">RUN</span> Currently running</div>
+        <div class="key-row"><span class="swatch dashed" style="background:#2faa55;">&middot;DL</span> Cached (DLib offline)</div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

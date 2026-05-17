@@ -1,0 +1,40 @@
+{% load library_extras %}
+<div class="modal-backdrop"
+     @click.self="showAdd = false"
+     @keydown.escape.window="showAdd = false">
+    <div class="modal" x-data="{ error: '' }"
+         @gameAdded.window="showAdd = false">
+        <div class="modal-header">
+            <div class="modal-title">Add Game</div>
+            <button class="btn btn-ghost btn-icon" @click="showAdd = false" title="Close">✕</button>
+        </div>
+        <form method="post" action="{% url 'library:add_game' %}"
+              hx-post="{% url 'library:add_game' %}"
+              hx-target="#games-grid"
+              hx-swap="afterbegin"
+              hx-on::after-request="if(event.detail.successful){ document.getElementById('add-url').value=''; error=''; } else { error = event.detail.xhr.responseText; }">
+            {% csrf_token %}
+            <div class="modal-body">
+                <div class="field">
+                    <label class="field-label" for="add-url">DLsite URL or product ID</label>
+                    <input id="add-url" class="text-input" type="text" name="url"
+                           placeholder="https://www.dlsite.com/maniax/work/=/product_id/RJ01402281.html"
+                           autofocus required>
+                </div>
+                <template x-if="error">
+                    <div class="error-text" x-text="error"></div>
+                </template>
+                <div style="font-size: 12px; color: var(--text-dim);">
+                    Tip: any DLsite product URL works, or just paste the bare id (RJ, BJ, VJ, RE, RG).
+                </div>
+                <div class="htmx-indicator" style="color: var(--text-dim);">
+                    <span class="spinner"></span> Fetching metadata from DLsite…
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" @click="showAdd = false">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add</button>
+            </div>
+        </form>
+    </div>
+</div>

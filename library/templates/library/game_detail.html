@@ -1,0 +1,334 @@
+{% extends 'library/base.html' %}
+{% load static %}
+{% load library_extras %}
+
+{% block title %}{{ game.title }} — DLib{% endblock %}
+
+{% block body %}
+<header class="topbar">
+    <a class="brand" href="{% url 'library:library' %}">
+        <span class="dot"></span>
+        <span>DLib</span>
+    </a>
+    <a href="{% url 'library:library' %}" class="btn btn-ghost">← Back to library</a>
+    <div class="spacer"></div>
+    <a class="btn btn-ghost btn-icon" href="{% url 'library:settings' %}" title="Settings">⚙</a>
+</header>
+
+<div class="detail" x-data="{ tab: 'description' }">
+    <div class="detail-header{% if game.is_bad %} detail-header-bad{% endif %}">
+        <h1>
+            {{ game.title }}
+            <span class="badge-source badge-source-{{ game.source }}" style="margin-left: 8px; vertical-align: middle;">
+                {{ game.get_source_display }}
+            </span>
+            {% if game.is_bad %}<span class="badge-bad" style="margin-left: 6px; vertical-align: middle;">⚠ BAD</span>{% endif %}
+        </h1>
+        <div style="display:flex; gap:8px;">
+            <button class="btn {% if game.is_favorite %}btn-favorite-active{% endif %}"
+                    hx-post="{% url 'library:toggle_favorite' game.pk %}"
+                    hx-vals='js:{enabled: {% if game.is_favorite %}"0"{% else %}"1"{% endif %}}'
+                    hx-swap="none"
+                    hx-on::after-request="if(event.detail.successful) window.location.reload();"
+                    title="Mark this game as a favorite">
+                {% if game.is_favorite %}★ Unfavorite{% else %}★ Mark favorite{% endif %}
+            </button>
+            <button class="btn {% if game.is_bad %}btn-primary{% else %}{% endif %}"
+                    hx-post="{% url 'library:toggle_bad' game.pk %}"
+                    hx-vals='js:{enabled: {% if game.is_bad %}"0"{% else %}"1"{% endif %}}'
+                    hx-swap="none"
+                    hx-on::after-request="if(event.detail.successful) window.location.reload();"
+                    title="Mark this game as bad / do-not-download">
+                {% if game.is_bad %}✓ Unmark bad{% else %}⚠ Mark as bad{% endif %}
+            </button>
+            <button class="btn btn-danger"
+                    hx-post="{% url 'library:delete_game' game.pk %}"
+                    hx-confirm="Delete this game from your library? Files on disk are not touched."
+                    hx-on::after-request="window.location='{% url 'library:library' %}'">
+                Remove
+            </button>
+        </div>
+    </div>
+
+    <div class="detail-body">
+        {% include 'library/partials/_gallery.html' %}
+
+        <div class="detail-actions">
+            {% if game.is_installed %}
+                <button class="btn btn-primary"
+                        hx-post="{% url 'library:launch_game' game.pk %}"
+                        hx-target="#install-status-{{ game.pk }}"
+                        hx-swap="outerHTML">
+                    ▶ Play
+                </button>
+            {% endif %}
+            <button class="btn"
+                    onclick="window.open('{{ game.dlsite_url }}', '_blank', 'noopener')">
+                ↗ Download / Open DLsite
+            </button>
+            <button class="btn"
+                    onclick="pickFolder('{{ game.install_folder|escapejs }}').then(p => { if(!p) return; htmx.ajax('POST', '{% url 'library:set_install_folder' game.pk %}', {values: {folder: p}, target: '#exe-picker-slot', swap: 'innerHTML'}).then(() => { var slot = document.getElementById('exe-picker-slot'); if (!slot || !slot.innerHTML.trim()) window.location.reload(); }); })">
+                📁 Set install folder
+            </button>
+            {% if game.install_folder %}
+            <button class="btn"
+                    hx-post="{% url 'library:open_install_folder' game.pk %}"
+                    hx-swap="none"
+                    title="Open in Windows Explorer">
+                🗂 Open install folder
+            </button>
+            <button class="btn"
+                    onclick="pickFile('{{ game.install_folder|escapejs }}').then(p => { if(!p) return; htmx.ajax('POST', '{% url 'library:set_executable' game.pk %}', {values: {exe: p}, target: '#install-status-{{ game.pk }}', swap: 'outerHTML'}).then(() => window.location.reload()); })">
+                🎮 Set executable
+            </button>
+            {% endif %}
+            <button class="btn"
+                    hx-post="{% url 'library:refresh_metadata' game.pk %}"
+                    hx-target="#card-{{ game.pk }}"
+                    hx-swap="outerHTML"
+                    hx-on::after-request="window.location.reload()">
+                ↻ Refresh metadata
+            </button>
+        </div>
+
+        <div class="info-grid">
+            <div class="info-row"><span class="info-label">Status</span>
+                <span class="info-value">
+                    <select class="select-input text-input"
+                            hx-post="{% url 'library:update_status' game.pk %}"
+                            hx-trigger="change"
+                            hx-target="#card-{{ game.pk }}"
+                            hx-swap="outerHTML"
+                            name="status">
+                        {% for value, label in game.STATUS_CHOICES %}
+                            <option value="{{ value }}" {% if game.status == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </span>
+            </div>
+            <div class="info-row"><span class="info-label">Installed</span>
+                <span class="info-value">{% include 'library/partials/_install_status.html' %}</span>
+            </div>
+            <div class="info-row"><span class="info-label">Personal rating</span>
+                <span class="info-value">{% include 'library/partials/_rating.html' %}</span>
+            </div>
+            <div class="info-row"><span class="info-label">Time played</span>
+                <span class="info-value">{{ game.time_played_display }}</span>
+            </div>
+            <div class="info-row"><span class="info-label">Launch with MTool</span>
+                <span class="info-value">
+                    <label class="toggle">
+                        <input type="checkbox"
+                               {% if game.launch_with_mtool %}checked{% endif %}
+                               hx-post="{% url 'library:toggle_mtool' game.pk %}"
+                               hx-trigger="change"
+                               hx-vals='js:{enabled: event.target.checked ? "1" : "0"}'
+                               hx-swap="none">
+                        <span>Launch via <code>StartWithTool.bat</code>
+                            (created by <a href="https://mtool.app/?lang=en" target="_blank"
+                            rel="noopener" class="link">MTool</a> after you run the game through it once)</span>
+                    </label>
+                </span>
+            </div>
+            <div class="info-row"><span class="info-label">Last played</span>
+                <span class="info-value">{{ game.last_played_at|default:"—" }}</span>
+            </div>
+            <div class="info-row"><span class="info-label">Added</span>
+                <span class="info-value">{{ game.added_at|date:"Y-m-d" }}</span>
+            </div>
+            <div class="info-row"><span class="info-label">Product ID</span>
+                <span class="info-value">{{ game.dlsite_id }}</span>
+            </div>
+            {% if game.circle %}
+            <div class="info-row"><span class="info-label">Creator</span>
+                <span class="info-value">{{ game.circle.name }}</span>
+            </div>
+            {% endif %}
+            {% if game.work_type %}
+            <div class="info-row"><span class="info-label">Type</span>
+                <span class="info-value">{{ game.work_type }}</span>
+            </div>
+            {% endif %}
+            {% if game.regist_date %}
+            <div class="info-row"><span class="info-label">Released</span>
+                <span class="info-value">{{ game.regist_date|date:"Y-m-d" }}</span>
+            </div>
+            {% endif %}
+            {% if game.file_size %}
+            <div class="info-row"><span class="info-label">File size</span>
+                <span class="info-value">{{ game.file_size }}</span>
+            </div>
+            {% endif %}
+            {% if game.file_format %}
+            <div class="info-row"><span class="info-label">File format</span>
+                <span class="info-value">{{ game.file_format|join:", " }}</span>
+            </div>
+            {% endif %}
+            <div class="info-row" style="grid-column: 1 / -1;">
+                <span class="info-label">DLsite link</span>
+                <span class="info-value"><a class="link" href="{{ game.dlsite_url }}" target="_blank" rel="noopener">{{ game.dlsite_url }}</a></span>
+            </div>
+            {% if game.install_folder %}
+            <div class="info-row" style="grid-column: 1 / -1;">
+                <span class="info-label">Install folder</span>
+                <span class="info-value" style="font-family: monospace; font-size: 12px;">{{ game.install_folder }}</span>
+            </div>
+            {% endif %}
+            {% if game.executable_path %}
+            <div class="info-row" style="grid-column: 1 / -1;">
+                <span class="info-label">Executable</span>
+                <span class="info-value" style="font-family: monospace; font-size: 12px;">{{ game.executable_path }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div>
+            <div class="tabs">
+                <button class="tab-btn" :class="tab === 'description' ? 'active' : ''" @click="tab = 'description'">Description</button>
+                {% if game.download_links %}
+                <button class="tab-btn" :class="tab === 'downloads' ? 'active' : ''" @click="tab = 'downloads'">Downloads ({{ game.download_links|length }})</button>
+                {% endif %}
+                <button class="tab-btn" :class="tab === 'tags' ? 'active' : ''" @click="tab = 'tags'">Genres &amp; Tags</button>
+                <button class="tab-btn" :class="tab === 'credits' ? 'active' : ''" @click="tab = 'credits'">Credits</button>
+                <button class="tab-btn" :class="tab === 'sessions' ? 'active' : ''" @click="tab = 'sessions'">Sessions</button>
+            </div>
+
+            <div class="tab-panel tab-panel-description" x-show="tab === 'description'">
+                {% if game.description %}{{ game.description }}{% else %}<em>No description available.</em>{% endif %}
+            </div>
+            {% if game.download_links %}
+            <div class="tab-panel" x-show="tab === 'downloads'" style="display:none;">
+                <div class="download-grid">
+                    {% for d in game.download_links %}
+                        <a class="download-card" href="{{ d.url }}" target="_blank" rel="noopener">
+                            <span class="download-host">{{ d.host }}</span>
+                            <span class="download-label">{{ d.label }}</span>
+                            <span class="download-url" title="{{ d.url }}">{{ d.url|truncatechars:60 }}</span>
+                        </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            <div class="tab-panel" x-show="tab === 'tags'" style="display:none;">
+                <div id="tag-section-{{ game.pk }}">
+                    {% include 'library/partials/_tag_section.html' %}
+                </div>
+            </div>
+            <div class="tab-panel" x-show="tab === 'credits'" style="display:none;">
+                {% if game.scenario %}<div><strong>Scenario:</strong> {{ game.scenario|join:", " }}</div>{% endif %}
+                {% if game.illustration %}<div><strong>Illustration:</strong> {{ game.illustration|join:", " }}</div>{% endif %}
+                {% if game.voice_actor %}<div><strong>Voice:</strong> {{ game.voice_actor|join:", " }}</div>{% endif %}
+                {% if game.music %}<div><strong>Music:</strong> {{ game.music|join:", " }}</div>{% endif %}
+                {% if not game.scenario and not game.illustration and not game.voice_actor and not game.music %}
+                    <em>No credit information available.</em>
+                {% endif %}
+            </div>
+            <div class="tab-panel" x-show="tab === 'sessions'" style="display:none;">
+                {% if recent_sessions %}
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr style="color: var(--text-dim); text-align:left;">
+                                <th style="padding:6px 8px;">Started</th>
+                                <th style="padding:6px 8px;">Ended</th>
+                                <th style="padding:6px 8px;">Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in recent_sessions %}
+                            <tr style="border-top:1px solid var(--border);">
+                                <td style="padding:6px 8px;">{{ s.started_at|date:"Y-m-d H:i" }}</td>
+                                <td style="padding:6px 8px;">{{ s.ended_at|date:"Y-m-d H:i"|default:"(running)" }}</td>
+                                <td style="padding:6px 8px;">{{ s.duration_seconds|seconds_display }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <em>No play sessions yet.</em>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Slot for exe picker modal that may be returned by set_install_folder -->
+<div id="exe-picker-slot"></div>
+
+<script>
+window.dlibAddTagWidget = function (gameId) {
+    return {
+        open: false,
+        query: '',
+        suggestions: [],
+        selIdx: -1,
+        toggle() {
+            this.open = !this.open;
+            if (this.open) {
+                this.$nextTick(() => {
+                    if (this.$refs.input) this.$refs.input.focus();
+                    this.loadSuggestions();
+                });
+            } else {
+                this.query = ''; this.suggestions = []; this.selIdx = -1;
+            }
+        },
+        close() {
+            this.open = false; this.query = ''; this.suggestions = []; this.selIdx = -1;
+        },
+        canAddNew() {
+            const q = this.query.trim();
+            if (!q) return false;
+            return !this.suggestions.some(s => s.toLowerCase() === q.toLowerCase());
+        },
+        async loadSuggestions() {
+            try {
+                const q = encodeURIComponent(this.query.trim());
+                const r = await fetch('/api/games/' + gameId + '/tag-suggestions/?q=' + q);
+                if (!r.ok) { this.suggestions = []; return; }
+                const data = await r.json();
+                this.suggestions = data.tags || [];
+                this.selIdx = -1;
+            } catch (_) {
+                this.suggestions = [];
+            }
+        },
+        moveSel(dir) {
+            const len = this.suggestions.length + (this.canAddNew() ? 1 : 0);
+            if (!len) return;
+            this.selIdx = (this.selIdx + dir + len) % len;
+        },
+        submitQuery() {
+            const q = this.query.trim();
+            if (this.selIdx >= 0 && this.selIdx < this.suggestions.length) {
+                this.addTag(this.suggestions[this.selIdx]);
+            } else if (q) {
+                this.addTag(q);
+            }
+        },
+        async addTag(name) {
+            if (!name) return;
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
+            const body = new URLSearchParams({ name: name });
+            try {
+                await fetch('/api/games/' + gameId + '/tags/add/', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': csrf,
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'HX-Request': 'true',
+                    },
+                    body: body,
+                });
+                this.close();
+                htmx.ajax('GET', '/api/games/' + gameId + '/tag-section/', {
+                    target: '#tag-section-' + gameId,
+                    swap: 'innerHTML',
+                });
+            } catch (e) {
+                console.error('addTag failed', e);
+            }
+        },
+    };
+};
+</script>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% load library_extras %}
+<div class="card{% if game.is_bad %} card-bad{% elif game.is_favorite %} card-favorite{% elif game.is_installed %} card-installed{% else %} card-not-installed{% endif %}" id="card-{{ game.pk }}">
+    <div class="card-cover" {% if game.cover_image %}style="background-image:url('{{ game.cover_image.url }}');"{% elif game.cover_url %}style="background-image:url('{{ game.cover_url }}');"{% endif %}>
+        {% if not game.cover_image and not game.cover_url %}
+            <div class="cover-placeholder">No cover</div>
+        {% endif %}
+        {% if game.work_type %}
+            <span class="badge-type">{{ game.work_type }}</span>
+        {% endif %}
+        <span class="badge-source badge-source-{{ game.source }}">{{ game.get_source_display }}</span>
+        {% if game.age_category == 'r18' %}
+            <span class="badge-age">R18</span>
+        {% elif game.age_category == 'r15' %}
+            <span class="badge-age">R15</span>
+        {% endif %}
+
+        {% if game.is_bad %}
+            <span class="badge-bad" title="Marked as bad">⚠ BAD</span>
+        {% elif game.is_favorite %}
+            <span class="badge-favorite" title="Marked as favorite">★ FAVORITE</span>
+        {% endif %}
+
+        <div class="play-overlay">
+            {% if game.is_installed %}
+                <button class="play-btn"
+                        title="Play"
+                        hx-post="{% url 'library:launch_game' game.pk %}"
+                        hx-target="#install-status-{{ game.pk }}"
+                        hx-swap="outerHTML">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+                </button>
+            {% else %}
+                <a class="play-btn" title="Open game page" href="{{ game.get_absolute_url }}">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+                </a>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-body">
+        <a class="card-title" href="{{ game.get_absolute_url }}">{{ game.title }}</a>
+        <div class="card-meta">
+            {% include 'library/partials/_install_status.html' %}
+            {% if game.circle %}<span>{{ game.circle.name }}</span>{% endif %}
+        </div>
+        <div class="card-meta">
+            <span class="card-id">{{ game.source_id }}</span>
+            {% if game.personal_rating %}
+                <span class="rating-stars" title="{{ game.personal_rating }}/10">
+                    {% for i in "x"|rjust:game.personal_rating %}★{% endfor %}
+                </span>
+            {% endif %}
+            {% if game.time_played_seconds %}
+                <span title="Total play time">⏱ {{ game.time_played_display }}</span>
+            {% endif %}
+        </div>
+    </div>
+</div>

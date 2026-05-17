@@ -1,0 +1,77 @@
+{% load library_extras %}
+<div class="modal-backdrop" id="exe-picker-backdrop"
+     onclick="if(event.target.id==='exe-picker-backdrop'){ window.dlibCloseExePicker(); }">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <div class="modal-title">Pick the game executable</div>
+            <button class="btn btn-ghost btn-icon" type="button"
+                    onclick="window.dlibCloseExePicker()" title="Close">×</button>
+        </div>
+        <div class="modal-body">
+            <div style="color: var(--text-dim); font-size: 13px;">
+                Multiple executables were found in
+                <code style="color: var(--text); background: var(--bg); padding: 2px 6px; border-radius: 4px;">{{ game.install_folder }}</code>.
+                Pick the one that launches the game.
+            </div>
+            <div class="exe-list">
+                {% for c in candidates %}
+                    <div class="exe-row">
+                        <div style="min-width:0; flex:2;">
+                            <div class="exe-name">{{ c.name }}</div>
+                            <div class="exe-path" title="{{ c.path }}">{{ c.path }}</div>
+                        </div>
+                        <button class="btn btn-primary use-this-btn" type="button"
+                                hx-post="{% url 'library:set_executable' game.pk %}"
+                                hx-vals='{"exe": "{{ c.path|escapejs }}"}'
+                                hx-target="#install-status-{{ game.pk }}"
+                                hx-swap="outerHTML"
+                                onclick="window.dlibMarkSelected(this);"
+                                hx-on::after-request="if(event.detail.successful){ setTimeout(() => { window.dlibCloseExePicker(); window.location.reload(); }, 650); } else { window.dlibMarkSelectedFailed(this); }">
+                            Use this
+                        </button>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" type="button"
+                    onclick="pickFile('{{ game.install_folder|escapejs }}').then(p => { if(p){ window.dlibBrowseManualRow(); htmx.ajax('POST', '{% url 'library:set_executable' game.pk %}', {values: {exe: p}, target: '#install-status-{{ game.pk }}', swap: 'outerHTML'}).then(() => setTimeout(() => { window.dlibCloseExePicker(); window.location.reload(); }, 650)); }})">
+                Browse manually…
+            </button>
+            <button class="btn" type="button"
+                    onclick="window.dlibCloseExePicker()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    window.dlibCloseExePicker = function () {
+        var slot = document.getElementById('exe-picker-slot');
+        if (slot) slot.innerHTML = '';
+    };
+    window.dlibMarkSelected = function (btn) {
+        var row = btn.closest('.exe-row');
+        if (row) row.classList.add('selected');
+        document.querySelectorAll('.use-this-btn').forEach(function (b) {
+            b.disabled = true;
+        });
+        btn.textContent = 'Selected ✓';
+    };
+    window.dlibMarkSelectedFailed = function (btn) {
+        var row = btn.closest('.exe-row');
+        if (row) row.classList.remove('selected');
+        document.querySelectorAll('.use-this-btn').forEach(function (b) {
+            b.disabled = false;
+        });
+        btn.textContent = 'Use this';
+    };
+    window.dlibBrowseManualRow = function () {
+        // No specific row to mark when Browse-manually is used, but still
+        // disable the in-list buttons so the user can't double-fire.
+        document.querySelectorAll('.use-this-btn').forEach(function (b) {
+            b.disabled = true;
+        });
+    };
+})();
+</script>

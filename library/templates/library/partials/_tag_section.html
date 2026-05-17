@@ -1,0 +1,59 @@
+{% load library_extras %}
+<div class="tags-row">
+    {% for tag in game.tags.all %}
+        <span class="tag-pill {{ tag.category }}">
+            {{ tag.name }}
+            <button type="button" class="tag-remove"
+                    title="Remove tag"
+                    hx-post="{% url 'library:remove_tag' game.pk %}"
+                    hx-vals='{"name": "{{ tag.name|escapejs }}"}'
+                    hx-target="#tag-section-{{ game.pk }}"
+                    hx-swap="innerHTML">×</button>
+        </span>
+    {% empty %}
+        <em style="color: var(--text-dim);">No tags yet.</em>
+    {% endfor %}
+</div>
+
+<div class="add-tag-widget"
+     x-data="dlibAddTagWidget({{ game.pk }})"
+     @keydown.escape.window="close()">
+    <button type="button" class="btn add-tag-btn"
+            @click="toggle()"
+            x-text="open ? '× Cancel' : '+ Add tag'"></button>
+
+    <div class="add-tag-shell" x-show="open" x-cloak>
+        <input type="text"
+               x-ref="input"
+               class="text-input add-tag-input"
+               x-model="query"
+               @focus="loadSuggestions()"
+               @input.debounce.150ms="loadSuggestions()"
+               @keydown.enter.prevent="submitQuery()"
+               @keydown.arrow-down.prevent="moveSel(1)"
+               @keydown.arrow-up.prevent="moveSel(-1)"
+               placeholder="Type tag name…"
+               autocomplete="off">
+
+        <ul class="suggest-list" x-show="suggestions.length || query.trim()">
+            <template x-for="(s, i) in suggestions" :key="s">
+                <li class="suggest-item"
+                    :class="i === selIdx ? 'active' : ''"
+                    @mouseenter="selIdx = i"
+                    @click="addTag(s)"
+                    x-text="s"></li>
+            </template>
+            <li class="suggest-item suggest-new"
+                x-show="canAddNew()"
+                :class="suggestions.length === selIdx ? 'active' : ''"
+                @mouseenter="selIdx = suggestions.length"
+                @click="addTag(query.trim())">
+                + Add new tag: "<span x-text="query.trim()"></span>"
+            </li>
+            <li class="suggest-empty"
+                x-show="!suggestions.length && !query.trim()">
+                No tags suggested yet — type to search, or any name to add.
+            </li>
+        </ul>
+    </div>
+</div>

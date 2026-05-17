@@ -1,0 +1,63 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# ===== Virtual envs =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== Django runtime / user data =====
+# DB lives in %LOCALAPPDATA%\DLib on a real install, but the dev server
+# uses the project root. Either way, NEVER commit it — it contains the
+# user's DLsite credentials, F95Zone session cookies, and game library.
+*.sqlite3
+*.sqlite3-journal
+db.sqlite3
+
+# Downloaded cover + sample images (per-user content)
+/media/
+
+# Runtime logs (may contain URLs / paths / errors)
+*.log
+/log samples/
+/dlib-tray.log
+/dlib-server.log
+/dlib.log
+
+# Django local override settings if any
+local_settings.py
+
+# ===== Build artifacts =====
+# Nuitka standalone bundle (huge, regeneratable, may contain bundled
+# state from the dev machine).
+/build/dist/
+/build/nuitka/
+nuitka-crash-report.xml
+# Generated icon — make_icon.py recreates it.
+/build/dlib.ico
+
+# Installer / packaging outputs
+*.spec
+*.exe
+*.msi
+*.xpi
+
+# ===== IDE / OS =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Misc =====
+*.bak
+*.tmp

@@ -1,0 +1,407 @@
+/* DLib Library Overlay — pill styles. Injected as <span> inside game links. */
+
+.dlib-pill {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: #fff;
+    z-index: 2147483646;
+    pointer-events: auto;
+    text-transform: uppercase;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    user-select: none;
+    line-height: 1.1;
+    transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.dlib-pill:hover {
+    transform: scale(1.06);
+    filter: brightness(1.1);
+}
+
+.dlib-pill-installed  { background: #2faa55; }     /* green  */
+.dlib-pill-running    { background: #e09020; }     /* amber  */
+.dlib-pill-library    { background: #4a8fd6; }     /* blue   */
+
+/* Favorite: neon cyan -> pink -> orange -> blue pastel gradient. Dark text
+   keeps it readable on the bright background and differentiates from the
+   other (white-on-color) pills. */
+.dlib-pill-favorite {
+    background: linear-gradient(90deg,
+        #6dd5ff 0%, #ff8ec7 35%, #ffc78b 65%, #7bb0ff 100%) !important;
+    color: #1a1a2e !important;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4) !important;
+    border-color: rgba(255, 255, 255, 0.55) !important;
+}
+
+/* The running pill pulses to call attention. */
+.dlib-pill-running {
+    animation: dlib-pulse 1.4s ease-in-out infinite;
+}
+@keyframes dlib-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+}
+
+/* ===== BAD pill — impossible to miss ================================== */
+
+.dlib-pill-bad {
+    /* Static-position loud pill — only the glow pulses, never the pill itself. */
+    top: 8px !important;
+    right: 8px !important;
+    font-size: 13px !important;
+    padding: 6px 12px !important;
+    background: #ff0000 !important;
+    color: #ffffff !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.8px !important;
+    border: 2px solid #ffffff !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+    box-shadow:
+        0 0 20px rgba(255, 0, 0, 1),
+        0 0 40px rgba(255, 0, 0, 0.85),
+        0 0 80px rgba(255, 0, 0, 0.55);
+    animation: none !important;
+    z-index: 2147483647 !important;
+    max-width: 80%;
+    white-space: nowrap;
+}
+.dlib-pill-bad::before {
+    content: '\26A0 ';   /* ⚠ */
+    margin-right: 2px;
+}
+
+/* ===== Bad-card treatment on listings ================================= */
+
+.dlib-bad-card {
+    position: relative !important;
+}
+.dlib-bad-card img {
+    filter: grayscale(1) brightness(0.45) contrast(0.85) !important;
+    transition: filter 0.15s ease !important;
+}
+/* Bad listings use the same left-edge accent strip as the other states,
+   just in red. Image grayscale + text/tag gray + the loud red banner do
+   the rest of the visual lifting; the outer red ring was overkill. */
+.dlib-bad-card {
+    box-shadow: inset 4px 0 0 #ff0000 !important;
+}
+.dlib-bad-card::after { content: none !important; }
+
+/* Gray every bit of text inside a bad card. */
+.dlib-bad-card,
+.dlib-bad-card * {
+    color: #888 !important;
+}
+/* …except our own banner, which keeps white text on its red gradient. */
+.dlib-bad-card .dlib-card-banner,
+.dlib-bad-card .dlib-card-banner * {
+    color: #ffffff !important;
+}
+
+/* Tag chips / labels become a much darker gray with no accent color. */
+.dlib-bad-card .label,
+.dlib-bad-card span[class*="label--"],
+.dlib-bad-card [class*="label-"][class*="-pill"],
+.dlib-bad-card .tag,
+.dlib-bad-card [class*="badge"] {
+    background: #1a1a1a !important;
+    background-image: none !important;
+    color: #555 !important;
+    border-color: rgba(255, 255, 255, 0.04) !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+}
+/* But the pill itself must NOT be greyed — it's the warning. */
+.dlib-bad-card .dlib-pill,
+.dlib-bad-page .dlib-pill {
+    filter: none !important;
+    opacity: 1 !important;
+}
+
+/* ===== Game-page sticky banner (any state) =========================== */
+
+/* Single banner element styled by state class. No animation. */
+.dlib-page-banner {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 2147483646;
+    color: white;
+    padding: 12px 56px 12px 20px;
+    text-align: center;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    border-bottom: 2px solid rgba(255, 255, 255, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    text-transform: uppercase;
+    transition: filter 0.12s ease;
+}
+.dlib-page-banner[style*="cursor: pointer"]:hover { filter: brightness(1.05); }
+
+.dlib-page-banner-bad {
+    background: linear-gradient(90deg, #8a0000 0%, #ff0000 50%, #8a0000 100%);
+    box-shadow: 0 4px 20px rgba(255, 0, 0, 0.5);
+    border-bottom-color: #ffffff;
+    font-size: 16px;
+}
+.dlib-page-banner-favorite {
+    background: linear-gradient(90deg,
+        #6dd5ff 0%, #ff8ec7 35%, #ffc78b 65%, #7bb0ff 100%);
+    color: #1a1a2e;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+    box-shadow: 0 4px 22px rgba(255, 142, 199, 0.45);
+    border-bottom-color: rgba(255, 255, 255, 0.65);
+}
+.dlib-page-banner-installed {
+    background: linear-gradient(90deg, #207a3f 0%, #2faa55 50%, #207a3f 100%);
+    box-shadow: 0 4px 18px rgba(52, 199, 89, 0.35);
+}
+.dlib-page-banner-library {
+    background: linear-gradient(90deg, #2f6a9e 0%, #4a8fd6 50%, #2f6a9e 100%);
+    box-shadow: 0 4px 18px rgba(74, 143, 214, 0.35);
+}
+.dlib-page-banner-running {
+    background: linear-gradient(90deg, #a26210 0%, #e09020 50%, #a26210 100%);
+    box-shadow: 0 4px 18px rgba(224, 144, 32, 0.35);
+}
+
+.dlib-page-banner-icon {
+    font-size: 18px;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+.dlib-page-banner-sub {
+    font-weight: 700;
+    opacity: 0.92;
+    text-transform: none;
+}
+.dlib-page-banner-close {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    background: rgba(0, 0, 0, 0.35);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    border-radius: 50%;
+    font-size: 16px;
+    font-weight: 900;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+}
+.dlib-page-banner-close:hover { background: rgba(0, 0, 0, 0.55); }
+
+/* Push site content down so it isn't hidden under the banner. */
+body.dlib-page-banner-shown {
+    padding-top: 50px !important;
+    box-sizing: border-box;
+}
+
+/* Gray every image on the page (drastic but the user asked for noticeable). */
+body.dlib-bad-page img {
+    filter: grayscale(1) brightness(0.5) contrast(0.85) !important;
+    transition: filter 0.15s ease !important;
+}
+/* DLib's own pill icon shouldn't be greyed. */
+body.dlib-bad-page .dlib-pill,
+body.dlib-bad-page .dlib-page-banner,
+body.dlib-bad-page .dlib-page-banner * { filter: none !important; }
+
+/* Disable known download-host links + cart buttons. */
+body.dlib-bad-page a[data-dlib-bad-link] {
+    filter: grayscale(1) brightness(0.55) !important;
+    opacity: 0.5 !important;
+    pointer-events: none !important;
+    text-decoration: line-through !important;
+    cursor: not-allowed !important;
+    position: relative;
+    outline: 1px dashed rgba(255, 0, 0, 0.6) !important;
+}
+body.dlib-bad-page a[data-dlib-bad-link]::after {
+    content: ' \26D4 BAD';      /* ⛔ BAD */
+    color: #ff3030;
+    font-weight: 900;
+    margin-left: 4px;
+    text-decoration: none;
+    display: inline-block;
+    pointer-events: none;
+}
+
+/* Common DLsite/F95 cart/buy buttons that don't always have href. */
+body.dlib-bad-page button[id*="buy" i],
+body.dlib-bad-page button[class*="buy" i],
+body.dlib-bad-page button[class*="cart" i],
+body.dlib-bad-page a[class*="cart" i],
+body.dlib-bad-page a[class*="buy" i],
+body.dlib-bad-page input[type="submit"][value*="cart" i],
+body.dlib-bad-page input[type="submit"][value*="buy" i] {
+    filter: grayscale(1) brightness(0.55) !important;
+    opacity: 0.5 !important;
+    pointer-events: none !important;
+    cursor: not-allowed !important;
+    text-decoration: line-through !important;
+}
+
+/* Toolbar that lives at the top-right of the OP cover image — holds the
+   status pill plus action buttons (Add / Mark bad / Unmark bad). */
+.dlib-pill-wrap {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    z-index: 2147483646;
+    pointer-events: none;
+}
+.dlib-pill-wrap > * {
+    pointer-events: auto;
+}
+
+/* Old pill-on-image rules now redundant — the wrap handles positioning. */
+.dlib-pill-onimage {
+    position: static !important;
+    top: auto !important;
+    right: auto !important;
+}
+
+.dlib-action-btn {
+    padding: 5px 11px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(15, 17, 22, 0.85);
+    color: #ffffff;
+    font-size: 11.5px;
+    font-weight: 800;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    transition: filter 0.12s ease, transform 0.12s ease;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+.dlib-action-btn:hover:not([disabled]) {
+    filter: brightness(1.15);
+    transform: translateY(-1px);
+}
+.dlib-action-btn[disabled] {
+    opacity: 0.7;
+    cursor: wait;
+}
+.dlib-action-btn-danger {
+    background: rgba(220, 30, 30, 0.92);
+    border-color: #ffffff;
+    box-shadow: 0 3px 12px rgba(220, 30, 30, 0.55);
+}
+.dlib-action-btn-add {
+    background: rgba(74, 143, 214, 0.92);
+    border-color: rgba(255, 255, 255, 0.7);
+}
+.dlib-action-btn-favorite {
+    background: linear-gradient(90deg,
+        #6dd5ff 0%, #ff8ec7 35%, #ffc78b 65%, #7bb0ff 100%);
+    color: #1a1a2e;
+    border-color: rgba(255, 255, 255, 0.7);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow: 0 3px 12px rgba(255, 142, 199, 0.55);
+}
+
+/* ===== Card-state banner across the top of a listing row ============== */
+
+.dlib-card-banner {
+    /* Force full-width even inside accidentally-flex parents. */
+    display: block !important;
+    width: 100% !important;
+    flex: 0 0 100% !important;
+    box-sizing: border-box !important;
+    padding: 6px 14px !important;
+    margin-bottom: 10px !important;
+    font-size: 11.5px !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.9px !important;
+    color: white !important;
+    text-align: center !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55) !important;
+    border-radius: 3px 3px 0 0 !important;
+    text-transform: uppercase !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+.dlib-card-banner-favorite {
+    background: linear-gradient(90deg,
+        #6dd5ff 0%, #ff8ec7 35%, #ffc78b 65%, #7bb0ff 100%) !important;
+    color: #1a1a2e !important;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.55) !important;
+}
+.dlib-card-banner-installed {
+    background: linear-gradient(90deg, #207a3f 0%, #2faa55 50%, #207a3f 100%) !important;
+}
+.dlib-card-banner-library {
+    background: linear-gradient(90deg, #2f6a9e 0%, #4a8fd6 50%, #2f6a9e 100%) !important;
+}
+.dlib-card-banner-running {
+    background: linear-gradient(90deg, #a26210 0%, #e09020 50%, #a26210 100%) !important;
+}
+.dlib-card-banner-bad {
+    background: linear-gradient(90deg, #8a0000 0%, #ff0000 50%, #8a0000 100%) !important;
+    box-shadow: 0 2px 14px rgba(255, 0, 0, 0.55) !important;
+    border-bottom: 2px solid #ffffff !important;
+    font-size: 13px !important;
+    padding: 7px 14px !important;
+    margin-bottom: 14px !important;
+    letter-spacing: 1.1px !important;
+}
+
+/* Subtle left-edge accent on the row itself for each state. */
+.dlib-card-installed { box-shadow: inset 4px 0 0 #2faa55; }
+.dlib-card-library   { box-shadow: inset 4px 0 0 #4a8fd6; }
+.dlib-card-running   { box-shadow: inset 4px 0 0 #e09020; }
+.dlib-card-favorite  { box-shadow: inset 4px 0 0 #ff8ec7; }
+
+/* Server offline but we have cached data: keep the color (still useful
+   info) but switch to a dashed border + tiny dot prefix so the user
+   knows this came from cache. Tooltip shows the cache age. */
+.dlib-pill-cached {
+    border-style: dashed !important;
+    border-width: 1.5px !important;
+    border-color: rgba(255, 255, 255, 0.55) !important;
+    animation: none !important;
+}
+.dlib-pill-cached::before {
+    content: '\2022 ';   /* bullet */
+    opacity: 0.75;
+    margin-right: 1px;
+}
+
+/* Fallback: server offline + cache MISS for a previously-pilled link.
+   We don't know current state, so grey it out + ? to be honest. */
+.dlib-pill-stale {
+    background: #555 !important;
+    color: #d2d2d2 !important;
+    filter: grayscale(1);
+    animation: none !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+}
+.dlib-pill-stale::after {
+    content: ' ?';
+    opacity: 0.85;
+    margin-left: 1px;
+}
+.dlib-pill-stale::before {
+    content: none;
+}

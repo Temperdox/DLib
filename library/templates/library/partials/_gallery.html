@@ -1,0 +1,58 @@
+{% load library_extras %}
+{% with images=game|gallery_image_list %}
+<div class="gallery"
+     x-data="{ idx: 0, len: {{ images|length }} }"
+     @keydown.left.window="if (len > 1) idx = (idx - 1 + len) % len"
+     @keydown.right.window="if (len > 1) idx = (idx + 1) % len">
+    {% if images %}
+    <div class="gallery-frame">
+        {% for src in images %}
+            <img class="gallery-img"
+                 src="{{ src }}"
+                 alt="{{ game.title }} — image {{ forloop.counter }}"
+                 loading="lazy"
+                 x-show="idx === {{ forloop.counter0 }}"
+                 {% if images|length > 1 %}@click="idx = (idx + 1) % len"{% endif %}
+                 style="cursor: {% if images|length > 1 %}pointer{% else %}default{% endif %};">
+        {% endfor %}
+
+        {% if images|length > 1 %}
+        <button class="gallery-nav prev" type="button"
+                @click.stop="idx = (idx - 1 + len) % len"
+                title="Previous image (←)" aria-label="Previous image">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <polyline points="15 6 9 12 15 18"/>
+            </svg>
+        </button>
+        <button class="gallery-nav next" type="button"
+                @click.stop="idx = (idx + 1) % len"
+                title="Next image (→)" aria-label="Next image">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
+                <polyline points="9 6 15 12 9 18"/>
+            </svg>
+        </button>
+
+        <div class="gallery-counter">
+            <span x-text="idx + 1"></span> / {{ images|length }}
+        </div>
+        {% endif %}
+    </div>
+
+    {% if images|length > 1 %}
+    <div class="gallery-thumbs">
+        {% for src in images %}
+            <button type="button" class="thumb"
+                    :class="idx === {{ forloop.counter0 }} ? 'active' : ''"
+                    @click="idx = {{ forloop.counter0 }}"
+                    title="Image {{ forloop.counter }}"
+                    style="background-image: url('{{ src }}');"></button>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="gallery-frame">
+        <div class="cover-placeholder" style="aspect-ratio: 16/9;">No images available</div>
+    </div>
+    {% endif %}
+</div>
+{% endwith %}

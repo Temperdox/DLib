@@ -1,0 +1,24 @@
+{% load library_extras %}
+<div id="rating-{{ game.pk }}" class="star-input" x-data="{ hover: 0, current: {{ game.personal_rating|default:0 }} }">
+    {% for i in "x"|rjust:10 %}
+        {% with n=forloop.counter %}
+        <span class="star"
+              :class="(hover ? hover >= {{ n }} : current >= {{ n }}) ? 'filled' : ''"
+              @mouseenter="hover = {{ n }}"
+              @mouseleave="hover = 0"
+              hx-post="{% url 'library:update_rating' game.pk %}"
+              hx-vals='{"rating": "{{ n }}"}'
+              hx-target="#rating-{{ game.pk }}"
+              hx-swap="outerHTML"
+              title="{{ n }}/10">★</span>
+        {% endwith %}
+    {% endfor %}
+    {% if game.personal_rating %}
+    <button class="btn btn-ghost" style="padding:2px 6px; font-size:11px; margin-left:6px;"
+            hx-post="{% url 'library:update_rating' game.pk %}"
+            hx-vals='{"rating": "0"}'
+            hx-target="#rating-{{ game.pk }}"
+            hx-swap="outerHTML"
+            title="Clear rating">×</button>
+    {% endif %}
+</div>

@@ -1,0 +1,248 @@
+{% extends 'library/base.html' %}
+{% load static %}
+
+{% block title %}DLib — Settings{% endblock %}
+
+{% block body %}
+<header class="topbar">
+    <a class="brand" href="{% url 'library:library' %}">
+        <span class="dot"></span>
+        <span>DLib</span>
+    </a>
+    <a href="{% url 'library:library' %}" class="btn btn-ghost">← Back to library</a>
+    <div class="spacer"></div>
+</header>
+
+<div class="settings-card">
+    <h2>Settings</h2>
+    <form class="settings-grid"
+          hx-post="{% url 'library:save_settings' %}"
+          hx-target="#settings-toast"
+          hx-swap="innerHTML">
+        <div class="field">
+            <label class="field-label" for="dlsite-root">DLsite install root</label>
+            <div class="field-row">
+                <input class="text-input" type="text" id="dlsite-root"
+                       name="dlsite_install_root"
+                       value="{{ settings_obj.dlsite_install_root }}"
+                       placeholder="F:\NSFW\Games\DLsite">
+                <button type="button" class="btn"
+                        onclick="pickFolder(document.getElementById('dlsite-root').value).then(p => { if(p) document.getElementById('dlsite-root').value = p; })">
+                    Browse…
+                </button>
+            </div>
+            <small style="color: var(--text-dim); font-size: 12px;">
+                Folder picker dialogs for DLsite games start here. Linked DLsite games move to
+                <code style="color: var(--text);">&lt;DLsite root&gt;\linked\</code>.
+            </small>
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="f95-root">F95Zone install root</label>
+            <div class="field-row">
+                <input class="text-input" type="text" id="f95-root"
+                       name="f95zone_install_root"
+                       value="{{ settings_obj.f95zone_install_root }}"
+                       placeholder="F:\NSFW\Games\F95Zone">
+                <button type="button" class="btn"
+                        onclick="pickFolder(document.getElementById('f95-root').value).then(p => { if(p) document.getElementById('f95-root').value = p; })">
+                    Browse…
+                </button>
+            </div>
+            <small style="color: var(--text-dim); font-size: 12px;">
+                Folder picker dialogs for F95Zone games start here. Linked F95Zone games move to
+                <code style="color: var(--text);">&lt;F95Zone root&gt;\linked\</code>.
+            </small>
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="locale">Metadata locale</label>
+            <select class="text-input" id="locale" name="locale">
+                <option value="en_US" {% if settings_obj.locale == 'en_US' %}selected{% endif %}>English (en_US)</option>
+                <option value="ja_JP" {% if settings_obj.locale == 'ja_JP' %}selected{% endif %}>Japanese (ja_JP)</option>
+                <option value="zh_CN" {% if settings_obj.locale == 'zh_CN' %}selected{% endif %}>Simplified Chinese (zh_CN)</option>
+                <option value="zh_TW" {% if settings_obj.locale == 'zh_TW' %}selected{% endif %}>Traditional Chinese (zh_TW)</option>
+                <option value="ko_KR" {% if settings_obj.locale == 'ko_KR' %}selected{% endif %}>Korean (ko_KR)</option>
+            </select>
+        </div>
+
+        <hr style="border:none; border-top:1px solid var(--border);">
+
+        <div class="field" x-data="f95LoginCard()" x-init="loadStatus()">
+            <label class="field-label">F95Zone session</label>
+            <div class="field-row" style="align-items:flex-start; gap:14px; flex-wrap:wrap;">
+                <div style="display:flex; flex-direction:column; gap:6px; min-width:240px;">
+                    <template x-if="status && status.logged_in">
+                        <div>
+                            <span class="install-pill installed"><span class="dot"></span>Logged in</span>
+                            <small style="display:block; margin-top:4px; color: var(--text-dim);">
+                                <span x-text="status.cookie_count"></span> cookies stored,
+                                CF clearance: <span x-text="status.has_cf_clearance ? 'yes' : 'no'"></span>
+                            </small>
+                        </div>
+                    </template>
+                    <template x-if="!status || !status.logged_in">
+                        <div>
+                            <span class="install-pill not-installed"><span class="dot"></span>Not logged in</span>
+                            <small style="display:block; margin-top:4px; color: var(--text-dim);">
+                                F95Zone is behind Cloudflare; without a session, fetches usually 403
+                                and games fall back to a slug-derived title.
+                            </small>
+                        </div>
+                    </template>
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" class="btn btn-primary"
+                            @click="login()" :disabled="busy">
+                        <span x-show="!busy">Log in to F95Zone</span>
+                        <span x-show="busy"><span class="spinner"></span> Complete login in the popup…</span>
+                    </button>
+                    <button type="button" class="btn" @click="logout()"
+                            x-show="status && status.logged_in" :disabled="busy">
+                        Clear session
+                    </button>
+                </div>
+            </div>
+            <template x-if="!hasNative">
+                <small style="color: var(--text-dim); margin-top:6px;">
+                    F95Zone login requires the desktop launcher (pywebview). Open DLib via
+                    <code>DLib.exe</code> rather than browsing to <code>http://127.0.0.1:8000</code> manually.
+                </small>
+            </template>
+            <template x-if="message">
+                <small x-text="message"
+                       :style="messageType === 'error' ? 'color: var(--red); margin-top:6px;' : 'color: var(--green); margin-top:6px;'">
+                </small>
+            </template>
+        </div>
+
+        <hr style="border:none; border-top:1px solid var(--border);">
+
+        <div class="field">
+            <label class="field-label" for="dlsite-username">DLsite username</label>
+            <input class="text-input" type="text" id="dlsite-username"
+                   name="dlsite_username" value="{{ settings_obj.dlsite_username }}"
+                   placeholder="Used for PlayAPI features (purchases list)">
+        </div>
+        <div class="field">
+            <label class="field-label" for="dlsite-password">DLsite password</label>
+            <input class="text-input" type="password" id="dlsite-password"
+                   name="dlsite_password"
+                   placeholder="{% if settings_obj.dlsite_password %}(stored — leave blank to keep){% else %}Not set{% endif %}">
+            <small style="color: var(--text-dim); font-size: 12px;">
+                Stored locally in SQLite. Used only for PlayAPI calls.
+            </small>
+        </div>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+            <button type="submit" class="btn btn-primary">Save settings</button>
+        </div>
+    </form>
+    <div id="settings-toast" style="margin-top: 12px;"></div>
+</div>
+
+<script>
+function f95LoginCard() {
+    return {
+        status: null,
+        busy: false,
+        message: '',
+        messageType: '',
+        hasNative: false,
+
+        async init() {
+            // Plain Alpine convention — runs automatically as the component mounts.
+            await this.waitForPywebview();
+            this.hasNative = !!(window.pywebview && window.pywebview.api
+                                && window.pywebview.api.start_f95_login);
+            console.log('[DLib] f95LoginCard mounted; hasNative =', this.hasNative,
+                        'api keys:', window.pywebview && window.pywebview.api
+                                     ? Object.keys(window.pywebview.api) : '(none)');
+            await this.loadStatus();
+        },
+
+        async loadStatus() {
+            this.hasNative = !!(window.pywebview && window.pywebview.api
+                                && window.pywebview.api.start_f95_login);
+            if (!this.hasNative || !window.pywebview.api.f95_login_status) return;
+            try { this.status = await window.pywebview.api.f95_login_status(); }
+            catch (e) { console.warn('[DLib] f95_login_status failed:', e); }
+        },
+
+        // Wait up to 5s for pywebview to attach its JS API. Resolves on the
+        // pywebviewready event OR a polling check (whichever fires first).
+        waitForPywebview() {
+            return new Promise(resolve => {
+                if (window.pywebview && window.pywebview.api) return resolve();
+                let done = false;
+                const finish = () => { if (!done) { done = true; resolve(); } };
+                window.addEventListener('pywebviewready', finish, { once: true });
+                const start = Date.now();
+                const tick = () => {
+                    if (done) return;
+                    if (window.pywebview && window.pywebview.api) return finish();
+                    if (Date.now() - start > 5000) return finish();
+                    setTimeout(tick, 100);
+                };
+                tick();
+            });
+        },
+
+        async login() {
+            console.log('[DLib] login() clicked');
+            this.message = '';
+            // Re-check at click time — pywebview may have just become ready.
+            this.hasNative = !!(window.pywebview && window.pywebview.api
+                                && window.pywebview.api.start_f95_login);
+            if (!this.hasNative) {
+                this.message = 'pywebview API is not available. '
+                    + 'Are you launched via DLib.exe rather than browsing to '
+                    + 'http://127.0.0.1:8000 in another browser? '
+                    + '(Inspected api keys: '
+                    + JSON.stringify(window.pywebview && window.pywebview.api
+                                     ? Object.keys(window.pywebview.api) : null)
+                    + ')';
+                this.messageType = 'error';
+                return;
+            }
+            this.busy = true;
+            try {
+                console.log('[DLib] calling start_f95_login…');
+                const r = await window.pywebview.api.start_f95_login();
+                console.log('[DLib] start_f95_login returned:', r);
+                if (r && r.ok) {
+                    this.message = 'Saved ' + r.cookie_count + ' cookies'
+                        + (r.key_cookies && r.key_cookies.length
+                            ? ' (' + r.key_cookies.join(', ') + ').' : '.');
+                    this.messageType = 'ok';
+                } else {
+                    this.message = (r && r.error) || 'Login failed.';
+                    this.messageType = 'error';
+                }
+                await this.loadStatus();
+            } catch (e) {
+                console.error('[DLib] login exception:', e);
+                this.message = 'Login error: ' + e;
+                this.messageType = 'error';
+            } finally {
+                this.busy = false;
+            }
+        },
+
+        async logout() {
+            if (!window.pywebview || !window.pywebview.api
+                || !window.pywebview.api.clear_f95_login) return;
+            try {
+                await window.pywebview.api.clear_f95_login();
+                this.message = 'Session cleared.';
+                this.messageType = 'ok';
+            } catch (e) {
+                this.message = 'Clear failed: ' + e;
+                this.messageType = 'error';
+            }
+            await this.loadStatus();
+        },
+    };
+}
+</script>
+{% endblock %}

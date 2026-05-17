@@ -1,0 +1,15 @@
+{% load library_extras %}
+<span id="install-status-{{ game.pk }}"
+      class="install-pill {% if game.is_running %}running{% elif game.is_installed %}installed{% else %}not-installed{% endif %}"
+      {% if game.is_running %}
+      hx-get="{% url 'library:install_status_partial' game.pk %}"
+      hx-trigger="every 2s"
+      hx-swap="outerHTML"
+      {% endif %}>
+    <span class="dot"></span>
+    {% if game.is_running %}Running
+    {% elif game.is_installed %}Downloaded
+    {% else %}Not downloaded
+    {% endif %}
+    {% if error %}<small style="color:var(--red); margin-left:6px;">{{ error }}</small>{% endif %}
+</span>
