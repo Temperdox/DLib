@@ -1060,15 +1060,49 @@ def _stream_then_unlink(path: str):
             pass
 
 
+def _write_export_zip(target_path: str) -> int:
+    """Write the archive to a filesystem path. Returns its size in bytes."""
+    with zipfile.ZipFile(target_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        manifest = {
+            'schema_version': EXPORT_SCHEMA_VERSION,
+            'app_version': EXPORT_APP_VERSION,
+            'exported_at': timezone.now().isoformat(),
+            'counts': {
+                'games': Game.objects.count(),
+                'tags': Tag.objects.count(),
+                'creators': Creator.objects.count(),
+                'play_sessions': sum(g.play_sessions.count() for g in Game.objects.all()),
+                'aliases': GameAlias.objects.count(),
+                'manual_tags': ManualGameTag.objects.count(),
+            },
+        }
+        zf.writestr('manifest.json', json.dumps(manifest, indent=2))
+
+        data_buf = io.StringIO()
+        call_command('dumpdata', 'library',
+                     indent=2, stdout=data_buf,
+                     use_natural_foreign_keys=False,
+                     use_natural_primary_keys=False)
+        zf.writestr('data.json', data_buf.getvalue())
+
+        media_root = Path(django_settings.MEDIA_ROOT)
+        if media_root.is_dir():
+            for fp in media_root.rglob('*'):
+                if fp.is_file():
+                    rel = fp.relative_to(media_root)
+                    zf.write(fp, f'media/{rel.as_posix()}')
+    return os.path.getsize(target_path)
+
+
 @require_POST
 def export_data(request):
-    """Build and stream a ``.dlib`` archive containing:
+    """Bundle DB + media + settings into a ``.dlib`` archive.
 
-    * ``manifest.json`` — schema version, app version, export timestamp, counts
-    * ``data.json``     — Django dumpdata for the ``library`` app
-                          (Game, Tag, Creator, AppSettings, GameAlias,
-                           ManualGameTag, PlaySession)
-    * ``media/...``     — every file under MEDIA_ROOT (covers + samples)
+    Two modes:
+    * If ``path`` POST param is given, write the archive there and return
+      a JSON status (used by the desktop UI which gets the path via the
+      native Save As dialog).
+    * Otherwise stream the archive back as an attachment download.
     """
     if process_tracker.active_games():
         return HttpResponse(
@@ -1076,57 +1110,37 @@ def export_data(request):
             status=409,
         )
 
+    target = (request.POST.get('path') or '').strip()
+    if target:
+        try:
+            parent = os.path.dirname(target) or '.'
+            os.makedirs(parent, exist_ok=True)
+            size = _write_export_zip(target)
+        except (OSError, ValueError) as exc:
+            log.exception('export to %s failed', target)
+            return JsonResponse({'ok': False, 'error': str(exc)}, status=400)
+        return JsonResponse({'ok': True, 'path': target, 'bytes': size})
+
+    # Browser download fallback (pywebview struggles with these).
     tmp = tempfile.NamedTemporaryFile(suffix='.dlib', delete=False)
     tmp_path = tmp.name
     tmp.close()
-
     try:
-        with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-            manifest = {
-                'schema_version': EXPORT_SCHEMA_VERSION,
-                'app_version': EXPORT_APP_VERSION,
-                'exported_at': timezone.now().isoformat(),
-                'counts': {
-                    'games': Game.objects.count(),
-                    'tags': Tag.objects.count(),
-                    'creators': Creator.objects.count(),
-                    'play_sessions': sum(g.play_sessions.count() for g in Game.objects.all()),
-                    'aliases': GameAlias.objects.count(),
-                    'manual_tags': ManualGameTag.objects.count(),
-                },
-            }
-            zf.writestr('manifest.json', json.dumps(manifest, indent=2))
-
-            data_buf = io.StringIO()
-            call_command('dumpdata', 'library',
-                         indent=2, stdout=data_buf,
-                         use_natural_foreign_keys=False,
-                         use_natural_primary_keys=False)
-            zf.writestr('data.json', data_buf.getvalue())
-
-            media_root = Path(django_settings.MEDIA_ROOT)
-            if media_root.is_dir():
-                for fp in media_root.rglob('*'):
-                    if fp.is_file():
-                        rel = fp.relative_to(media_root)
-                        zf.write(fp, f'media/{rel.as_posix()}')
-
-        filename = f'DLib-export-{timezone.now().strftime("%Y%m%d-%H%M%S")}.dlib'
-        size = os.path.getsize(tmp_path)
-        response = StreamingHttpResponse(
-            _stream_then_unlink(tmp_path),
-            content_type='application/octet-stream',
-        )
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        response['Content-Length'] = str(size)
-        return response
+        size = _write_export_zip(tmp_path)
     except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        try: os.unlink(tmp_path)
+        except OSError: pass
         log.exception('export_data failed')
         return HttpResponse('Export failed — see dlib.log.', status=500)
+
+    filename = f'DLib-export-{timezone.now().strftime("%Y%m%d-%H%M%S")}.dlib'
+    response = StreamingHttpResponse(
+        _stream_then_unlink(tmp_path),
+        content_type='application/octet-stream',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['Content-Length'] = str(size)
+    return response
 
 
 @require_POST

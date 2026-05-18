@@ -152,6 +152,27 @@ class JsApi:
         )
         return self._first(result)
 
+    def pick_save_path(self, default_name: str = '',
+                        file_types: str = '') -> str:
+        """Native Save As dialog. ``file_types`` is a semicolon-separated
+        list of pywebview file-type descriptors (e.g. ``"DLib export (*.dlib);;All files (*.*)"``);
+        empty means all files."""
+        if self._window is None:
+            return ''
+        directory = self._resolve_initial('')
+        if not directory:
+            directory = os.path.expanduser('~') + os.sep + 'Downloads'
+            if not os.path.isdir(directory):
+                directory = os.path.expanduser('~')
+        kwargs = {'directory': directory, 'save_filename': default_name}
+        if file_types:
+            kwargs['file_types'] = tuple(file_types.split(';;'))
+        result = self._window.create_file_dialog(
+            webview.SAVE_DIALOG,
+            **kwargs,
+        )
+        return self._first(result)
+
     # ------------------------------------------------------------------
     # F95Zone embedded login — captures session cookies + UA so the
     # f95zone_client can punch through Cloudflare.
