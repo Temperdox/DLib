@@ -67,7 +67,7 @@
                 ↗ Download / Open DLsite
             </button>
             <button class="btn"
-                    onclick="pickFolder('{{ game.install_folder|escapejs }}').then(p => { if(!p) return; htmx.ajax('POST', '{% url 'library:set_install_folder' game.pk %}', {values: {folder: p}, target: '#exe-picker-slot', swap: 'innerHTML'}).then(() => { var slot = document.getElementById('exe-picker-slot'); if (!slot || !slot.innerHTML.trim()) window.location.reload(); }); })">
+                    onclick="pickFolder('{{ game.install_folder|default:default_install_root|escapejs }}').then(p => { if(!p) return; htmx.ajax('POST', '{% url 'library:set_install_folder' game.pk %}', {values: {folder: p}, target: '#exe-picker-slot', swap: 'innerHTML'}).then(() => { var slot = document.getElementById('exe-picker-slot'); if (!slot || !slot.innerHTML.trim()) window.location.reload(); }); })">
                 📁 Set install folder
             </button>
             {% if game.install_folder %}

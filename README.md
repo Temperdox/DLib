@@ -45,7 +45,7 @@ Requires:
 .\.venv\Scripts\python build\build.py --clean
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\dlib.iss
 ```
-Output: `build\dist\Setup-DLib-0.1.6.exe`. Installs to
+Output: `build\dist\Setup-DLib-0.1.7.exe`. Installs to
 `%LOCALAPPDATA%\Programs\DLib`. User data (DB + media) lives in
 `%LOCALAPPDATA%\DLib` and is **not** removed by the uninstaller,
 so reinstalls preserve the library.

@@ -48,7 +48,7 @@ overkill for a personal local tool.
 
 ## Verify it works
 
-1. Open the popup (toolbar icon) — should say *Connected — DLib v0.1.6*
+1. Open the popup (toolbar icon) — should say *Connected — DLib v0.1.7*
    and show your library count.
 2. Visit `https://f95zone.to/latest_alpha/#/cat=games` or any DLsite
    browse page — game cards in your library get a colored banner across

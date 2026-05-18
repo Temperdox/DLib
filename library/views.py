@@ -114,10 +114,16 @@ def game_detail_view(request, pk: int):
         Game.objects.select_related('circle').prefetch_related('tags', 'play_sessions'),
         pk=pk,
     )
+    settings_obj = AppSettings.load()
     return render(request, 'library/game_detail.html', {
         'game': game,
         'is_running': process_tracker.is_running(game.pk),
         'recent_sessions': game.play_sessions.all()[:10],
+        # Source-specific install root used to seed the native folder picker
+        # when the game doesn't have an install_folder set yet. Without this
+        # the picker opened in Downloads, which makes no sense for someone
+        # who's already configured per-source library roots.
+        'default_install_root': settings_obj.install_root_for(game.source) or '',
     })
 
 
@@ -1080,7 +1086,7 @@ def api_link(request):
 # ---------------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_APP_VERSION = '0.1.6'
+EXPORT_APP_VERSION = '0.1.7'
 
 
 def _stream_then_unlink(path: str):
@@ -1280,7 +1286,7 @@ def api_health(request):
     return JsonResponse({
         'ok': True,
         'app': 'DLib',
-        'version': '0.1.6',
+        'version': '0.1.7',
         'sources': [Game.SOURCE_DLSITE, Game.SOURCE_F95ZONE],
         'games': Game.objects.count(),
     })
