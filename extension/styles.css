@@ -460,6 +460,12 @@ body.dlib-bad-page input[type="submit"][value*="buy" i] {
     display: block !important;
     width: 100% !important;
     flex: 0 0 100% !important;
+    /* DLsite favorites/purchases rows are CSS grid containers with the
+       thumbnail in column 1; without this our banner would land in the
+       thumbnail cell and squash to ~240px wide. -1 = span to the last
+       grid line, regardless of how many columns the parent declares. */
+    grid-column: 1 / -1 !important;
+    order: -1 !important;     /* flex: force first slot */
     box-sizing: border-box !important;
     padding: 6px 14px !important;
     margin-bottom: 10px !important;

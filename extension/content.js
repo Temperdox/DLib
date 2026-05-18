@@ -20,7 +20,13 @@
 (function () {
     'use strict';
 
-    const SCAN_DEBOUNCE_MS = 350;
+    // Vue/SPA pages (DLsite favorites, Cart-style listings) fire DOM
+    // mutations at 10-30 Hz. A short debounce here was causing scan()
+    // to fire dozens of times per second. The per-card dlibCardSig cache
+    // means the redundant scans were cheap DOM-wise, but each one still
+    // hit the SW (and via it the server). 800 ms is short enough that
+    // a real navigation feels instant but coalesces the SPA noise.
+    const SCAN_DEBOUNCE_MS = 800;
     const MAX_BATCH = 200;
     const REQUERY_INTERVAL_MS = 30000;
 
@@ -145,6 +151,7 @@
         '.structItem',                  // f95 forum latest / forum index
         'tr.search_result_img_box',     // dlsite list row
         'li.search_result_img_box',
+        'article.one_column_work_item', // dlsite favorites / purchases (Vue grid layout)
         '.work_1col',
         '.work_text_1col',
         '.block-row',
@@ -165,8 +172,19 @@
     function setCardState(link, desc) {
         const card = findCardContainer(link);
         if (!card) return;
-        ['installed','library','running','bad'].forEach(k =>
-            card.classList.remove('dlib-bad-card', 'dlib-card-' + k));
+
+        // Idempotency: skip the DOM rewrite if the card is already in the
+        // requested state. Vue/SPA pages (DLsite favorites, etc.) mutate
+        // constantly — without this guard we were ripping the banner off
+        // and rebuilding it on every scan, which is expensive and visibly
+        // flickers.
+        const wantSig = desc ? desc.kind : '_none';
+        if (card.dataset.dlibCardSig === wantSig) return;
+        card.dataset.dlibCardSig = wantSig;
+
+        ['installed','library','running','bad','favorite'].forEach(k =>
+            card.classList.remove('dlib-card-' + k));
+        card.classList.remove('dlib-bad-card');
         card.querySelectorAll(':scope > .dlib-card-banner').forEach(b => b.remove());
 
         if (!desc) return;
@@ -183,7 +201,10 @@
     function clearPillOnLink(link) {
         const pill = link.querySelector(':scope > .dlib-pill');
         if (pill) pill.remove();
-        link.dataset.dlibPilled = '';
+        // NOTE: dlibPilled is intentionally NOT wiped here — it's the marker
+        // that lets non-requeryAll scans skip already-resolved links. Wiping
+        // it on every scan was forcing a server round-trip for every link
+        // every time, even when nothing had changed.
     }
 
     // ----- pill placement on an IMAGE (thread page cover) ------------------
@@ -866,15 +887,22 @@
             // Listings: card-banner only (no pill). The banner across the top
             // of the row is the indicator; an extra floating pill on the title
             // text/avatar was redundant and overlapped surrounding content.
+            // We only mutate cards whose payload was actually batched into
+            // this scan — others retain their existing dataset.dlibCardSig
+            // and aren't touched at all. setCardState itself is idempotent.
+            const batchedUrls = new Set(batched.map(i => i.url));
             for (const it of bestPerGame) {
+                if (!batchedUrls.has(it.url)) continue;  // skip stale entries
                 clearPillOnLink(it.link);
                 const payload = results[it.url];
                 if (payload && currentGameId && payload.id === currentGameId) {
                     setCardState(it.link, null); // dedupe vs the page banner
-                    continue;
+                } else if (payload) {
+                    setCardState(it.link, pillFor(payload));
+                } else {
+                    setCardState(it.link, null);
                 }
-                if (payload) setCardState(it.link, pillFor(payload));
-                else setCardState(it.link, null);
+                it.link.dataset.dlibPilled = '1';  // mark so next non-all scan skips
             }
 
             // Handle the current page (game we're viewing).
