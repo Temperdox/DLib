@@ -14,14 +14,26 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 LINKED_SUBDIR = 'linked'
 
-# Patterns scored as "almost certainly the game" — higher = stronger
+# Patterns scored as "almost certainly the game" — higher = stronger.
+# Lowercase comparison. Includes both Windows and POSIX launchers since
+# nothing in the scanner is platform-specific apart from the candidate
+# filter (which only walks .exe on Windows, +x files elsewhere).
 _STRONG_BONUS = {
+    # Windows / engine-specific launchers
     'game.exe': 100,
     'rpg_rt.exe': 90,
     'nw.exe': 80,
     'nwjs.exe': 80,
     'wolfrpgeditor.exe': 70,
     'launcher.exe': 50,
+    # POSIX / Unity / Godot launcher conventions
+    'start.sh': 90,
+    'launch.sh': 90,
+    'run.sh': 85,
+    'game.sh': 90,
+    'play.sh': 80,
+    'game.x86_64': 100,    # Unity Linux build
+    'game.x86': 95,
 }
 
 # Filename substrings that knock candidates out of consideration entirely

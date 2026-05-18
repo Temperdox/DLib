@@ -215,13 +215,29 @@ def launch_and_track(game, exe_override: str | None = None,
     if sys.platform == 'win32':
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
 
+    suffix = launch_target.suffix.lower()
+    if sys.platform == 'win32':
+        # Windows shell scripts must go through cmd.exe.
+        cmd = [str(launch_target)]
+        use_shell = suffix in {'.bat', '.cmd'}
+    else:
+        # POSIX: route .sh through /bin/sh explicitly so launchers without
+        # the executable bit (or without a shebang) still run. Other files
+        # are executed directly — they're either +x ELF binaries or Wine
+        # wrappers the user set up themselves.
+        use_shell = False
+        if suffix == '.sh':
+            cmd = ['/bin/sh', str(launch_target)]
+        else:
+            cmd = [str(launch_target)]
+
     try:
         proc = subprocess.Popen(
-            [str(launch_target)],
+            cmd,
             cwd=cwd,
             close_fds=True,
             creationflags=creationflags,
-            shell=launch_target.suffix.lower() in {'.bat', '.cmd'},
+            shell=use_shell,
         )
     except OSError as exc:
         raise LaunchError(f'Failed to start game: {exc}') from exc
