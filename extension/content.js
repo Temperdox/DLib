@@ -316,7 +316,58 @@
         });
     }
 
-    function makeActionBtn(label, kind, onClick) {
+    // -- Action queue ------------------------------------------------------
+    // Every API call from a button goes through this queue so rapid clicks
+    // serialize cleanly. The visual feedback (spinner, toast) is INSTANT —
+    // only the actual fetch is queued, so the user always sees their click
+    // register even if previous actions are still in flight.
+    const _actionQueue = [];
+    let _actionRunning = false;
+    function enqueueAction(handler) {
+        return new Promise((resolve) => {
+            _actionQueue.push({ handler, resolve });
+            _drainActionQueue();
+        });
+    }
+    async function _drainActionQueue() {
+        if (_actionRunning) return;
+        _actionRunning = true;
+        try {
+            while (_actionQueue.length) {
+                const { handler, resolve } = _actionQueue.shift();
+                let r;
+                try { r = await handler(); }
+                catch (e) { r = { ok: false, error: String(e) }; }
+                resolve(r);
+            }
+        } finally {
+            _actionRunning = false;
+        }
+    }
+
+    function showToast(message, kind) {
+        let host = document.getElementById('dlib-toast-host');
+        if (!host) {
+            host = document.createElement('div');
+            host.id = 'dlib-toast-host';
+            document.documentElement.appendChild(host);
+        }
+        const toast = document.createElement('div');
+        toast.className = 'dlib-toast dlib-toast-' + (kind || 'info');
+        toast.textContent = message;
+        host.appendChild(toast);
+        // Force layout then add 'show' so the transition runs.
+        // eslint-disable-next-line no-unused-expressions
+        toast.offsetWidth;
+        toast.classList.add('show');
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 2400);
+    }
+
+    function makeActionBtn(label, kind, onClick, opts) {
+        opts = opts || {};
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'dlib-action-btn' + (kind ? ' dlib-action-btn-' + kind : '');
@@ -325,31 +376,69 @@
             e.preventDefault();
             e.stopPropagation();
             const originalText = btn.textContent;
+
+            // INSTANT visual feedback — runs before any await.
             btn.disabled = true;
-            btn.textContent = 'Working…';
+            btn.classList.add('dlib-action-btn-loading');
+            btn.textContent = opts.workingText || 'Working';
+            if (opts.toastWorking) showToast(opts.toastWorking, 'info');
+
             try {
-                const result = await onClick();
+                const result = await enqueueAction(onClick);
                 if (result && result.ok === false) {
-                    btn.textContent = 'Failed';
-                    btn.title = result.error || 'request failed';
+                    const errMsg = result.error || 'request failed';
+                    btn.classList.remove('dlib-action-btn-loading');
+                    btn.classList.add('dlib-action-btn-failed');
+                    btn.textContent = '✕ Failed';
+                    btn.title = errMsg;
+                    showToast(errMsg, 'error');
                     setTimeout(() => {
+                        btn.classList.remove('dlib-action-btn-failed');
                         btn.textContent = originalText;
                         btn.disabled = false;
-                    }, 1800);
+                        btn.title = '';
+                    }, 2200);
                 } else {
+                    btn.classList.remove('dlib-action-btn-loading');
+                    btn.classList.add('dlib-action-btn-ok');
+                    btn.textContent = '✓ Done';
+                    if (opts.toastSuccess) showToast(opts.toastSuccess, 'success');
                     // Re-scan so banners + pill state refresh from the SW cache.
+                    // The button itself will be replaced by the re-rendered toolbar.
                     scan({ requeryAll: true });
+                    // Defensive: if scan didn't replace the button (e.g. server
+                    // didn't change state), restore after a beat.
+                    setTimeout(() => {
+                        if (btn.isConnected) {
+                            btn.classList.remove('dlib-action-btn-ok');
+                            btn.textContent = originalText;
+                            btn.disabled = false;
+                        }
+                    }, 1200);
                 }
             } catch (err) {
-                btn.textContent = 'Failed';
+                btn.classList.remove('dlib-action-btn-loading');
+                btn.classList.add('dlib-action-btn-failed');
+                btn.textContent = '✕ Failed';
                 btn.title = String(err);
+                showToast(String(err), 'error');
                 setTimeout(() => {
+                    btn.classList.remove('dlib-action-btn-failed');
                     btn.textContent = originalText;
                     btn.disabled = false;
-                }, 1800);
+                    btn.title = '';
+                }, 2200);
             }
         }, true);
         return btn;
+    }
+
+    function _toolbarSig(payload) {
+        if (!payload || !payload.found) return 'not-in-library';
+        const bits = ['in-library'];
+        if (payload.is_bad) bits.push('bad');
+        if (payload.is_favorite) bits.push('fav');
+        return bits.join('|');
     }
 
     function placeActionsOnImage(img, payload) {
@@ -369,32 +458,57 @@
             wrap.className = 'dlib-pill-wrap';
             host.appendChild(wrap);
         }
+
+        // Idempotent: if the buttons currently rendered already match the
+        // desired state, leave the DOM alone. Prevents the toolbar from
+        // being wiped + rebuilt under the user's mouse on every random
+        // page mutation — which was eating clicks and causing hover flicker.
+        const sig = _toolbarSig(payload);
+        if (wrap.dataset.dlibSig === sig) return;
+        wrap.dataset.dlibSig = sig;
+
         wrap.innerHTML = '';
 
         const url = location.href;
         const inLibrary = !!(payload && payload.found);
         if (!inLibrary) {
             wrap.appendChild(makeActionBtn('+ Add to library', 'add',
-                () => upsertViaSw(url, {})));
+                () => upsertViaSw(url, {}),
+                { workingText: 'Adding…',
+                  toastWorking: 'Adding game to your DLib library…',
+                  toastSuccess: '✓ Added to library' }));
             wrap.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
-                () => upsertViaSw(url, { is_favorite: true })));
+                () => upsertViaSw(url, { is_favorite: true }),
+                { workingText: 'Saving…',
+                  toastWorking: 'Marking favorite…',
+                  toastSuccess: '★ Marked as favorite' }));
             wrap.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
-                () => upsertViaSw(url, { is_bad: true })));
+                () => upsertViaSw(url, { is_bad: true }),
+                { workingText: 'Saving…',
+                  toastWorking: 'Marking as bad…',
+                  toastSuccess: '⚠ Marked as bad' }));
         } else {
-            // Favorite toggle is independent of bad — show both.
             if (payload.is_favorite) {
                 wrap.appendChild(makeActionBtn('★ Unfavorite', '',
-                    () => upsertViaSw(url, { is_favorite: false })));
+                    () => upsertViaSw(url, { is_favorite: false }),
+                    { workingText: 'Saving…',
+                      toastSuccess: 'Removed from favorites' }));
             } else {
                 wrap.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
-                    () => upsertViaSw(url, { is_favorite: true })));
+                    () => upsertViaSw(url, { is_favorite: true }),
+                    { workingText: 'Saving…',
+                      toastSuccess: '★ Marked as favorite' }));
             }
             if (payload.is_bad) {
                 wrap.appendChild(makeActionBtn('✓ Unmark bad', '',
-                    () => upsertViaSw(url, { is_bad: false })));
+                    () => upsertViaSw(url, { is_bad: false }),
+                    { workingText: 'Saving…',
+                      toastSuccess: 'Bad mark cleared' }));
             } else {
                 wrap.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
-                    () => upsertViaSw(url, { is_bad: true })));
+                    () => upsertViaSw(url, { is_bad: true }),
+                    { workingText: 'Saving…',
+                      toastSuccess: '⚠ Marked as bad' }));
             }
         }
     }
@@ -609,7 +723,31 @@
 
     scan();
 
-    const obs = new MutationObserver(scheduleScan);
+    // Mutations inside our own injected nodes (toolbars / banners / toasts)
+    // shouldn't re-trigger a scan — that would create a feedback loop and
+    // wipe the buttons the user is hovering.
+    const OWN_SELECTORS = [
+        '.dlib-pill-wrap',
+        '.dlib-page-banner',
+        '.dlib-card-banner',
+        '#dlib-toast-host',
+        '.dlib-bad-banner',
+    ];
+    function _isOwnMutation(target) {
+        if (!target || !target.closest) return false;
+        for (const sel of OWN_SELECTORS) {
+            if (target.closest(sel)) return true;
+        }
+        return false;
+    }
+    const obs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+            if (!_isOwnMutation(m.target)) {
+                scheduleScan();
+                return;
+            }
+        }
+    });
     obs.observe(document.body, { childList: true, subtree: true });
 
     setInterval(() => scan({ requeryAll: true }), REQUERY_INTERVAL_MS);
