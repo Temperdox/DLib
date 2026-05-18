@@ -147,10 +147,12 @@ class JsApi:
         if self._window is None:
             return ''
         directory = self._resolve_initial(initial, is_file=True)
+        # HTML is offered as its own filter so users can pick an .html
+        # entrypoint for browser-based games (RenPy web build, Twine, etc.).
         file_types = (
-            ('Executable (*.exe)', 'All files (*.*)')
+            ('Executable (*.exe)', 'HTML game (*.html;*.htm)', 'All files (*.*)')
             if sys.platform == 'win32'
-            else ('All files (*)',)
+            else ('HTML game (*.html;*.htm)', 'All files (*)')
         )
         result = self._window.create_file_dialog(
             webview.OPEN_DIALOG,
@@ -180,6 +182,95 @@ class JsApi:
             **kwargs,
         )
         return self._first(result)
+
+    # ------------------------------------------------------------------
+    # HTML game launcher — opens the HTML file in a pywebview sub-window
+    # so the user can play it without leaving DLib, and we get a clean
+    # lifecycle signal (the window's `closed` event) to finalize the
+    # play session. No process tracking needed — the window IS the session.
+    # ------------------------------------------------------------------
+
+    def launch_html_game(self, game_id: int) -> dict:
+        log.info('launch_html_game: game_id=%s', game_id)
+        if webview is None:
+            return {'ok': False, 'error': 'pywebview not loaded'}
+        try:
+            from library.models import Game
+            from library.services import process_tracker
+        except Exception as exc:
+            log.exception('launch_html_game import failed')
+            return {'ok': False, 'error': f'import failed: {exc}'}
+
+        try:
+            game = Game.objects.get(pk=int(game_id))
+        except Game.DoesNotExist:
+            return {'ok': False, 'error': 'game not found'}
+
+        path = (game.executable_path or '').strip()
+        if not path:
+            return {'ok': False, 'error': 'no executable set for this game'}
+        if not os.path.isfile(path):
+            return {'ok': False, 'error': f'html file not found: {path}'}
+        if not path.lower().endswith(('.html', '.htm')):
+            return {'ok': False, 'error': 'executable is not an html file'}
+
+        # Build a file:// URL pathlib-style so spaces / unicode survive.
+        try:
+            from pathlib import Path as _Path
+            file_url = _Path(path).resolve().as_uri()
+        except Exception as exc:
+            return {'ok': False, 'error': f'could not build file url: {exc}'}
+
+        try:
+            session_id, started_at = process_tracker.start_html_session(game)
+        except process_tracker.LaunchError as exc:
+            return {'ok': False, 'error': str(exc)}
+        except Exception as exc:
+            log.exception('start_html_session failed')
+            return {'ok': False, 'error': f'session start failed: {exc}'}
+
+        try:
+            game_window = webview.create_window(
+                title=f'{game.title} — DLib',
+                url=file_url,
+                width=1280,
+                height=820,
+                min_size=(640, 480),
+                background_color='#000000',
+                resizable=True,
+            )
+        except Exception as exc:
+            log.exception('create_window failed for html game')
+            # Roll back the session if window creation fails.
+            try:
+                process_tracker.finalize_html_session(game.pk)
+            except Exception:
+                pass
+            return {'ok': False, 'error': f'create_window failed: {exc}'}
+
+        finalized = {'done': False}
+
+        def _on_closed():
+            if finalized['done']:
+                return
+            finalized['done'] = True
+            try:
+                process_tracker.finalize_html_session(game.pk)
+            except Exception:
+                log.exception('finalize_html_session failed for game %s', game.pk)
+
+        try:
+            game_window.events.closed += _on_closed
+        except Exception:
+            log.exception('failed to wire html game window closed event')
+            # If we can't observe closure we'll leak the session. Roll it back
+            # now rather than leaving a dangling open-forever entry.
+            _on_closed()
+            return {'ok': False, 'error': 'could not attach close handler'}
+
+        log.info('launch_html_game OK: game=%s session=%s url=%s',
+                 game.pk, session_id, file_url)
+        return {'ok': True, 'session_id': session_id}
 
     # ------------------------------------------------------------------
     # F95Zone embedded login — captures session cookies + UA so the

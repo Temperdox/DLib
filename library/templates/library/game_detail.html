@@ -55,12 +55,19 @@
 
         <div class="detail-actions">
             {% if game.is_installed %}
-                <button class="btn btn-primary"
-                        hx-post="{% url 'library:launch_game' game.pk %}"
-                        hx-target="#install-status-{{ game.pk }}"
-                        hx-swap="outerHTML">
-                    ▶ Play
-                </button>
+                {% if game.is_html_game %}
+                    <button class="btn btn-primary"
+                            onclick="window.dlibLaunchHtml({{ game.pk }})">
+                        ▶ Play (HTML game)
+                    </button>
+                {% else %}
+                    <button class="btn btn-primary"
+                            hx-post="{% url 'library:launch_game' game.pk %}"
+                            hx-target="#install-status-{{ game.pk }}"
+                            hx-swap="outerHTML">
+                        ▶ Play
+                    </button>
+                {% endif %}
             {% endif %}
             <button class="btn"
                     onclick="window.open('{{ game.dlsite_url }}', '_blank', 'noopener')">

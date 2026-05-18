@@ -44,20 +44,72 @@ class TrackerHandle:
 
 
 _active: dict[int, TrackerHandle] = {}
+# Separate registry for HTML games — they don't have a real PID since they
+# run inside a pywebview sub-window. The window's `closed` event drives the
+# session finalization (no daemon thread / no psutil.wait), keyed by game_id.
+_active_html: dict[int, dict] = {}   # game_id → {session_id, started_at}
 _lock = threading.Lock()
 
 
 def is_running(game_id: int) -> bool:
     with _lock:
         handle = _active.get(game_id)
-    if handle is None:
-        return False
+        if handle is None:
+            # HTML session counts as "running" too — the user has a window open.
+            return game_id in _active_html
     return psutil.pid_exists(handle.pid)
 
 
 def active_games() -> list[int]:
     with _lock:
-        return list(_active.keys())
+        return list(_active.keys()) + list(_active_html.keys())
+
+
+def start_html_session(game) -> tuple[int, float]:
+    """Open a tracked play session for an HTML game (window-based, no PID).
+
+    The caller (JsApi.launch_html_game) is responsible for creating the
+    pywebview window and wiring its ``events.closed`` to call
+    ``finalize_html_session(game.pk)``. We do NOT spawn a daemon thread
+    here — the window's closed event is the lifecycle signal.
+
+    Returns (session_id, monotonic_started_at).
+    """
+    from library.models import PlaySession
+
+    with _lock:
+        if game.pk in _active_html or (
+            game.pk in _active and psutil.pid_exists(_active[game.pk].pid)
+        ):
+            raise LaunchError('Game is already running.')
+
+    started_at = time.monotonic()
+    session = PlaySession.objects.create(
+        game=game,
+        started_at=timezone.now(),
+        pid=0,  # 0 = window-based, no real process
+    )
+    with _lock:
+        _active_html[game.pk] = {
+            'session_id': session.pk,
+            'started_at': started_at,
+        }
+    log.info('launched HTML game %s session %s', game.pk, session.pk)
+    return session.pk, started_at
+
+
+def finalize_html_session(game_id: int) -> None:
+    """Called from the pywebview window's `closed` event."""
+    with _lock:
+        entry = _active_html.pop(game_id, None)
+    if entry is None:
+        return
+    elapsed = int(time.monotonic() - entry['started_at'])
+    try:
+        _finalize(game_id, entry['session_id'], elapsed)
+    except Exception:
+        log.exception('html-session finalize failed for game %s', game_id)
+    log.info('html game %s finished, elapsed=%ss', game_id, elapsed)
 
 
 def _finalize(game_id: int, session_id: int, elapsed_seconds: int) -> None:
@@ -285,7 +337,9 @@ def _shutdown_cleanup() -> None:
 
     with _lock:
         handles = list(_active.values())
+        html_entries = list(_active_html.items())
         _active.clear()
+        _active_html.clear()
 
     for handle in handles:
         elapsed = int(time.monotonic() - handle.started_at)
@@ -293,6 +347,13 @@ def _shutdown_cleanup() -> None:
             _finalize(handle.game_id, handle.session_id, elapsed)
         except Exception:
             log.exception('shutdown finalize failed for game %s', handle.game_id)
+
+    for game_id, entry in html_entries:
+        elapsed = int(time.monotonic() - entry['started_at'])
+        try:
+            _finalize(game_id, entry['session_id'], elapsed)
+        except Exception:
+            log.exception('shutdown finalize failed for html game %s', game_id)
 
 
 atexit.register(_shutdown_cleanup)

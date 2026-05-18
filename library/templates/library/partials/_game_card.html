@@ -22,13 +22,21 @@
 
         <div class="play-overlay">
             {% if game.is_installed %}
-                <button class="play-btn"
-                        title="Play"
-                        hx-post="{% url 'library:launch_game' game.pk %}"
-                        hx-target="#install-status-{{ game.pk }}"
-                        hx-swap="outerHTML">
-                    <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
-                </button>
+                {% if game.is_html_game %}
+                    <button class="play-btn"
+                            title="Play (HTML game)"
+                            onclick="event.stopPropagation(); window.dlibLaunchHtml({{ game.pk }})">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+                    </button>
+                {% else %}
+                    <button class="play-btn"
+                            title="Play"
+                            hx-post="{% url 'library:launch_game' game.pk %}"
+                            hx-target="#install-status-{{ game.pk }}"
+                            hx-swap="outerHTML">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+                    </button>
+                {% endif %}
             {% else %}
                 <a class="play-btn" title="Open game page" href="{{ game.get_absolute_url }}">
                     <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>

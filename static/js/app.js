@@ -50,3 +50,29 @@ window.pickFile = async function (initial) {
     }
     return _httpPick('/api/pick-file/', initial);
 };
+
+// Launch an HTML game in a pywebview sub-window. The window IS the play
+// session — closing it finalizes the session via JsApi.launch_html_game's
+// closed-event handler. Falls back to a warning if not running inside the
+// desktop shell (HTML games can't be played from a plain browser tab — we
+// rely on the native window's closed event for lifetime tracking).
+window.dlibLaunchHtml = async function (gameId) {
+    if (!_hasPywebview() || !window.pywebview.api.launch_html_game) {
+        alert('HTML games can only be launched from inside the DLib desktop app, '
+              + 'not from a plain browser tab. (We use the native window\'s lifetime '
+              + 'to track playtime.)');
+        return;
+    }
+    try {
+        const resp = await window.pywebview.api.launch_html_game(gameId);
+        if (!resp || resp.ok === false) {
+            alert('Could not launch: ' + ((resp && resp.error) || 'unknown error'));
+            return;
+        }
+        // Refresh after a beat so the running pill / play-status updates.
+        setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 400);
+    } catch (e) {
+        console.warn('launch_html_game failed', e);
+        alert('Launch failed: ' + e);
+    }
+};

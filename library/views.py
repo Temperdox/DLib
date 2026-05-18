@@ -503,6 +503,19 @@ def set_executable(request, pk: int):
 @require_POST
 def launch_game(request, pk: int):
     game = get_object_or_404(Game, pk=pk)
+
+    # HTML game → bounce the frontend so it calls
+    # window.pywebview.api.launch_html_game(pk) instead. We can't create a
+    # pywebview window directly from this thread without ugly cross-thread
+    # plumbing, and the JsApi path is the cleanest way to wire the window's
+    # closed event back into the play-session tracker.
+    if game.is_html_game:
+        return HttpResponse(
+            f'<div data-dlib-html-launch="{game.pk}">'
+            'Opening in a sub-window…</div>',
+            headers={'HX-Trigger': f'dlibLaunchHtml-{game.pk}'},
+        )
+
     exe_override = None
     track_exe = None
 
@@ -1086,7 +1099,7 @@ def api_link(request):
 # ---------------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_APP_VERSION = '0.1.9'
+EXPORT_APP_VERSION = '0.1.10'
 
 
 def _stream_then_unlink(path: str):
@@ -1286,7 +1299,7 @@ def api_health(request):
     return JsonResponse({
         'ok': True,
         'app': 'DLib',
-        'version': '0.1.9',
+        'version': '0.1.10',
         'sources': [Game.SOURCE_DLSITE, Game.SOURCE_F95ZONE],
         'games': Game.objects.count(),
     })

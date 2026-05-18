@@ -34,6 +34,13 @@ _STRONG_BONUS = {
     'play.sh': 80,
     'game.x86_64': 100,    # Unity Linux build
     'game.x86': 95,
+    # HTML entrypoints (RenPy web, Twine, RPG Maker MV/MZ web export)
+    'index.html': 95,
+    'game.html': 95,
+    'start.html': 90,
+    'play.html': 90,
+    'main.html': 85,
+    'launcher.html': 80,
 }
 
 # Filename substrings that knock candidates out of consideration entirely
@@ -89,25 +96,41 @@ def _score(path: Path, root: Path) -> int:
     return bonus - depth * 5 + size_bonus
 
 
+def _is_html_entrypoint(name_lower: str) -> bool:
+    """Heuristic: only treat HTML files that look like game launchers as
+    candidates. Otherwise every README.html and bundled doc would pollute
+    the chooser."""
+    if not name_lower.endswith(('.html', '.htm')):
+        return False
+    base = name_lower.rsplit('.', 1)[0]
+    return base in {'index', 'game', 'start', 'play', 'main', 'launcher'}
+
+
 def scan_executables(folder: str | Path) -> list[ExeCandidate]:
     root = Path(folder)
     if not root.is_dir():
         return []
 
-    pattern = '*.exe' if sys.platform == 'win32' else '*'
+    # On every platform we walk all files; the per-OS filter then decides
+    # what counts. HTML entrypoints are picked up regardless of OS — the
+    # launch path is browser-based, so .html is "executable enough".
     candidates: list[ExeCandidate] = []
-    for entry in root.rglob(pattern):
+    for entry in root.rglob('*'):
         if not entry.is_file():
             continue
-        if sys.platform != 'win32':
-            mode = entry.stat().st_mode
-            if not (mode & 0o111):
-                continue
         name_lower = entry.name.lower()
-        if sys.platform == 'win32' and not name_lower.endswith('.exe'):
-            continue
         if _is_blacklisted(name_lower):
             continue
+
+        is_html = _is_html_entrypoint(name_lower)
+        if sys.platform == 'win32':
+            keep = name_lower.endswith('.exe') or is_html
+        else:
+            mode = entry.stat().st_mode
+            keep = bool(mode & 0o111) or is_html
+        if not keep:
+            continue
+
         candidates.append(ExeCandidate(
             score=_score(entry, root),
             path=str(entry),

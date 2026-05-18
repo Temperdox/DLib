@@ -131,6 +131,13 @@ class Game(models.Model):
             return False
 
     @property
+    def is_html_game(self) -> bool:
+        """The 'executable' is an HTML file — launch in a pywebview sub-window."""
+        if not self.executable_path:
+            return False
+        return self.executable_path.lower().endswith(('.html', '.htm'))
+
+    @property
     def is_running(self) -> bool:
         # Lazy import to avoid a circular dependency: process_tracker imports
         # PlaySession from this module inside its worker thread.
