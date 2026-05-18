@@ -229,6 +229,6 @@ def relocate_to_linked(game, install_root: str) -> tuple[bool, str | None]:
     elif game.executable_path:
         # Fallback: keep just the basename inside the new folder.
         game.executable_path = str(dst / Path(game.executable_path).name)
-    game.save(update_fields=['install_folder', 'executable_path'])
+    game.save(update_fields=['install_folder', 'executable_path', 'updated_at'])
     log.info('relocated game %s: %s -> %s', game.pk, src, dst)
     return True, str(dst)

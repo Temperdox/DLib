@@ -465,7 +465,7 @@ def set_install_folder(request, pk: int):
 
     if not candidates:
         game.executable_path = ''
-        game.save(update_fields=['install_folder', 'executable_path'])
+        game.save(update_fields=['install_folder', 'executable_path', 'updated_at'])
         if is_hx:
             return _pill_response(request, game,
                                   error=f'No executables found inside "{folder}".')
@@ -475,13 +475,13 @@ def set_install_folder(request, pk: int):
     auto = install_scanner.best_single_exe(folder)
     if auto:
         game.executable_path = auto
-        game.save(update_fields=['install_folder', 'executable_path'])
+        game.save(update_fields=['install_folder', 'executable_path', 'updated_at'])
         _maybe_relocate(game)
         if is_hx:
             return _pill_response(request, game)
         return redirect(game.get_absolute_url())
 
-    game.save(update_fields=['install_folder'])
+    game.save(update_fields=['install_folder', 'updated_at'])
     return render(request, 'library/partials/_exe_picker_modal.html', {
         'game': game,
         'candidates': candidates[:25],
@@ -497,7 +497,7 @@ def set_executable(request, pk: int):
     game.executable_path = exe
     if not game.install_folder:
         game.install_folder = str(Path(exe).parent)
-    game.save(update_fields=['executable_path', 'install_folder'])
+    game.save(update_fields=['executable_path', 'install_folder', 'updated_at'])
     _maybe_relocate(game)
     if request.headers.get('HX-Request'):
         return _pill_response(request, game)
@@ -1103,7 +1103,7 @@ def api_link(request):
 # ---------------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_APP_VERSION = '0.1.13'
+EXPORT_APP_VERSION = '0.1.14'
 
 
 def _stream_then_unlink(path: str):
@@ -1303,7 +1303,7 @@ def api_health(request):
     return JsonResponse({
         'ok': True,
         'app': 'DLib',
-        'version': '0.1.13',
+        'version': '0.1.14',
         'sources': [Game.SOURCE_DLSITE, Game.SOURCE_F95ZONE],
         'games': Game.objects.count(),
     })
