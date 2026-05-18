@@ -206,7 +206,7 @@ SPLASH_HTML_TEMPLATE = """<!doctype html>
 """
 
 
-def render_splash(stats: list[str], version: str = '0.1.4') -> str:
+def render_splash(stats: list[str], version: str = '0.1.5') -> str:
     return (
         SPLASH_HTML_TEMPLATE
         .replace('__STATS_JSON__', json.dumps(stats))

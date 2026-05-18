@@ -344,8 +344,15 @@
     // serialize cleanly. The visual feedback (spinner, toast) is INSTANT —
     // only the actual fetch is queued, so the user always sees their click
     // register even if previous actions are still in flight.
+    //
+    // _actionInFlight is also used to LOCK toolbar rebuilds. DLsite metadata
+    // enrichment can take 30-60s, during which the server's intermediate
+    // game.save() may make the row visible to scans. Without this lock, the
+    // toolbar would rebuild to "in-library" state mid-click, destroying the
+    // user's in-progress button and tricking them into clicking the new one.
     const _actionQueue = [];
     let _actionRunning = false;
+    let _actionInFlight = 0;
     function enqueueAction(handler) {
         return new Promise((resolve) => {
             _actionQueue.push({ handler, resolve });
@@ -358,9 +365,11 @@
         try {
             while (_actionQueue.length) {
                 const { handler, resolve } = _actionQueue.shift();
+                _actionInFlight++;
                 let r;
                 try { r = await handler(); }
                 catch (e) { r = { ok: false, error: String(e) }; }
+                finally { _actionInFlight--; }
                 resolve(r);
             }
         } finally {
@@ -524,20 +533,24 @@
         const url = location.href;
         const inLibrary = !!(payload && payload.found);
         if (!inLibrary) {
+            // DLsite metadata enrichment can take 30-60s for new adds because
+            // the server downloads sample images, fetches the work data, etc.
+            // Be honest about the wait so the user doesn't think it's stuck
+            // and start clicking again.
             host.appendChild(makeActionBtn('+ Add to library', 'add',
                 () => upsertViaSw(url, {}),
-                { workingText: 'Adding…',
-                  toastWorking: 'Adding game to your DLib library…',
+                { workingText: 'Adding (may take 30-60s)…',
+                  toastWorking: 'Adding to library — fetching metadata, please wait…',
                   toastSuccess: '✓ Added to library' }));
             host.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
                 () => addThenFlag(url, { is_favorite: true }, 'mark favorite'),
-                { workingText: 'Adding + marking…',
-                  toastWorking: 'Adding to library, then marking as favorite…',
+                { workingText: 'Adding + marking (30-60s)…',
+                  toastWorking: 'Adding to library, then marking as favorite (~30-60s)…',
                   toastSuccess: '★ Added & marked as favorite' }));
             host.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
                 () => addThenFlag(url, { is_bad: true }, 'mark as bad'),
-                { workingText: 'Adding + marking…',
-                  toastWorking: 'Adding to library, then marking as bad…',
+                { workingText: 'Adding + marking (30-60s)…',
+                  toastWorking: 'Adding to library, then marking as bad (~30-60s)…',
                   toastSuccess: '⚠ Added & marked as bad' }));
         } else {
             if (payload.is_favorite) {
@@ -602,6 +615,21 @@
             return true;
         }
 
+        // Don't rebuild while a user action is in flight. DLsite metadata
+        // enrichment can take 30-60s, during which the server's intermediate
+        // game.save() can flip the row from not-in-library to in-library —
+        // which would change the sig and destroy the "Saving…" button the
+        // user is waiting on. The post-action scan() will reconcile state
+        // once _actionInFlight drops back to 0.
+        if (_actionInFlight > 0 && toolbar) {
+            dlog('placeActionsInline: LOCKED — action in flight, skipping rebuild', {
+                prev_sig: toolbar.dataset.dlibSig,
+                new_sig: sig,
+                actions_in_flight: _actionInFlight,
+            });
+            return true;
+        }
+
         dlog('placeActionsInline: REBUILDING', {
             prev_sig: toolbar ? toolbar.dataset.dlibSig : '(none)',
             new_sig: sig,
@@ -645,6 +673,17 @@
         // page mutation — which was eating clicks and causing hover flicker.
         const sig = _toolbarSig(payload);
         if (wrap.dataset.dlibSig === sig) return;
+        // Same lock as placeActionsInline — don't destroy the in-progress
+        // button while the user's click is still being processed by the
+        // server (which can take 30-60s for DLsite metadata enrichment).
+        if (_actionInFlight > 0 && wrap.dataset.dlibSig) {
+            dlog('placeActionsOnImage: LOCKED — action in flight, skipping rebuild', {
+                prev_sig: wrap.dataset.dlibSig,
+                new_sig: sig,
+                actions_in_flight: _actionInFlight,
+            });
+            return;
+        }
         wrap.dataset.dlibSig = sig;
 
         wrap.innerHTML = '';
