@@ -71,20 +71,28 @@ def _default_install_root() -> str:
     """First configured install root, preferring DLsite then F95Zone.
 
     Used as the default starting directory for native file/folder pickers
-    when the caller doesn't have a more specific hint. Returns '' if
-    neither root is set or valid.
+    when the caller doesn't pass a hint. Falls back to the same per-source
+    default the template uses (``~/DLib/Games/DLsite``) so behavior is
+    consistent regardless of which path the picker came from. Works on
+    Windows, Linux, and macOS via pathlib.Path.home().
     """
     try:
-        from library.models import AppSettings
+        from library.models import AppSettings, Game
         s = AppSettings.load()
         for path in (s.dlsite_install_root, s.f95zone_install_root):
             path = (path or '').strip()
             if path and os.path.isdir(path):
                 return path
-        return ''
+        # Nothing configured — match the template's cross-platform fallback.
+        return s.effective_install_root_for(Game.SOURCE_DLSITE)
     except Exception:
         log.exception('default_install_root lookup failed')
-        return ''
+        # Absolute last resort: home dir always exists.
+        try:
+            from pathlib import Path as _Path
+            return str(_Path.home())
+        except Exception:
+            return ''
 
 
 class JsApi:

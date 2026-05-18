@@ -219,9 +219,33 @@ class AppSettings(models.Model):
     f95zone_user_agent = models.CharField(max_length=500, blank=True)
 
     def install_root_for(self, source: str) -> str:
+        """Returns the raw configured value (may be empty)."""
         if source == Game.SOURCE_F95ZONE:
             return self.f95zone_install_root
         return self.dlsite_install_root
+
+    def effective_install_root_for(self, source: str) -> str:
+        """Configured root if set + valid, else a cross-platform default
+        rooted in the user's home directory (``~/DLib/Games/<source>``).
+        The default directory is created lazily so the native file picker
+        has a real path to open at. Returning a path that doesn't exist
+        is fine on its own — but several picker backends (WebView2 on
+        Windows in particular) silently fall back to "Downloads" if the
+        directory argument doesn't resolve, which is exactly what we're
+        trying to avoid.
+        """
+        configured = (self.install_root_for(source) or '').strip()
+        if configured and Path(configured).is_dir():
+            return configured
+        sub = 'F95Zone' if source == Game.SOURCE_F95ZONE else 'DLsite'
+        default = Path.home() / 'DLib' / 'Games' / sub
+        try:
+            default.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Locked-down env (no write to home, sandbox, etc.) — fall back
+            # to plain home, which is guaranteed to exist.
+            return str(Path.home())
+        return str(default)
 
     def save(self, *args, **kwargs):
         self.pk = self.SINGLETON_ID
