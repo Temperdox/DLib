@@ -78,9 +78,22 @@ async def _fetch_work_async(product_id: str, locale: str = 'en_US') -> dict[str,
 
 
 def fetch_work(url_or_id: str, locale: str = 'en_US') -> dict[str, Any]:
-    """Synchronous wrapper. Returns a dict of normalized work metadata."""
+    """Synchronous wrapper. Returns a dict of normalized work metadata.
+
+    DLsite's API serves locale-specific JSON: the en_US endpoint 404s for
+    products without English metadata (most Japanese doujin works). When
+    the user-preferred locale fails, retry once with ja_JP — Japanese
+    metadata is always available since it's the source language.
+    """
     product_id = extract_product_id(url_or_id)
-    return async_to_sync(_fetch_work_async)(product_id, locale)
+    try:
+        return async_to_sync(_fetch_work_async)(product_id, locale)
+    except Exception as exc:
+        if locale.lower() != 'ja_jp':
+            log.info('DLsite fetch for %s failed on locale=%s (%s); '
+                     'retrying ja_JP', product_id, locale, exc)
+            return async_to_sync(_fetch_work_async)(product_id, 'ja_JP')
+        raise
 
 
 def normalize_cover_url(url: str | None) -> str | None:

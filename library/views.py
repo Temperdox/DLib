@@ -867,10 +867,15 @@ def api_lookup_bulk(request):
 def _autoadd_game(source: str, source_id: str, url: str) -> Game:
     """Fetch metadata + create a Game row. Caller has already classified URL.
 
-    Used by the public upsert endpoint when the extension marks a game bad
-    on a page for a game we haven't added yet.
+    Falls back to a minimal stub (just product_id as title) if metadata
+    fetching fails for any reason — DLsite 404s for delisted / age-gated
+    products, F95Zone Cloudflare-blocks without login, etc. The user can
+    still mark / favorite / unfavorite the stub and hit Refresh metadata
+    later when the source comes back online.
     """
     if source == Game.SOURCE_F95ZONE:
+        # f95zone_client.fetch_thread already returns a slug-derived stub on
+        # failure (with fetch_failed=True), so no extra try/except needed.
         data = f95zone_client.fetch_thread(url)
         canonical_url = data.get('url') or f95zone_client.thread_url(source_id)
         game = Game(
@@ -884,11 +889,27 @@ def _autoadd_game(source: str, source_id: str, url: str) -> Game:
         return game
 
     settings_obj = AppSettings.load()
-    data = dlsite_client.fetch_work(url, locale=settings_obj.locale or 'en_US')
     canonical_url = (
         url if url.startswith('http')
         else f'https://www.dlsite.com/maniax/work/=/product_id/{source_id}.html'
     )
+    try:
+        data = dlsite_client.fetch_work(url, locale=settings_obj.locale or 'en_US')
+    except Exception as exc:
+        # DLsite often 404s on delisted / age-gated / region-locked items.
+        # Don't fail the whole add — save a stub and let the user retry
+        # metadata refresh later from the detail page.
+        log.warning('DLsite fetch failed for %s (%s) — creating stub: %s',
+                    source_id, url, exc)
+        game = Game(
+            source=source,
+            source_id=source_id,
+            title=source_id,  # placeholder until a successful refresh
+            dlsite_url=canonical_url,
+        )
+        game.save()
+        return game
+
     game = Game(
         source=source,
         source_id=source_id,
