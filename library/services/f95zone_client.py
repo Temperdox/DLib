@@ -204,9 +204,16 @@ DOWNLOAD_HOSTS: list[tuple[str, str]] = [
     ('itch.io', 'itch.io'),
     ('patreon.com', 'Patreon'),
     ('subscribestar', 'SubscribeStar'),
+    # F95 attachments are kept only when they look like NON-image files
+    # (saves, patches, etc.) — image attachments are filtered out in
+    # _extract_downloads since they belong in the gallery, not Downloads.
     ('attachments.f95zone.to', 'F95 attachment'),
     ('/masked/', 'F95 masked link'),
 ]
+
+# Image file extensions used to decide whether an attachments.f95zone.to
+# link is a gallery preview (filter out) or a real download (keep).
+_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif'}
 
 # Substrings whose presence in an <img src> means it's UI chrome, not content.
 _IMG_SKIP = (
@@ -273,8 +280,17 @@ def _extract_forum_tags(soup) -> list[str]:
     return out
 
 
-def _extract_downloads(op_body) -> list[dict[str, str]]:
-    """Anchor tags in OP whose href hits a known download host."""
+def _extract_downloads(op_body, sample_image_urls: list[str] | None = None) -> list[dict[str, str]]:
+    """Anchor tags in OP whose href hits a known download host.
+
+    Excludes ``attachments.f95zone.to`` links that are clearly preview
+    images (URL ends in an image extension OR the same URL was also
+    extracted as a gallery sample). Those belong in the gallery, not the
+    Downloads tab — they spammed the Downloads list with junk like
+    "F95 attachment" entries pointing at thumbnails. Save files, patches,
+    and other non-image attachments stay.
+    """
+    sample_set = set(sample_image_urls or [])
     out: list[dict[str, str]] = []
     seen: set[str] = set()
     for a in op_body.find_all('a', href=True):
@@ -285,6 +301,13 @@ def _extract_downloads(op_body) -> list[dict[str, str]]:
         host = next((label for pat, label in DOWNLOAD_HOSTS if pat in low), None)
         if not host:
             continue
+        # Filter image-attachment noise out of Downloads.
+        if 'attachments.f95zone.to' in low:
+            if href in sample_set:
+                continue
+            ext = Path(low.split('?')[0]).suffix
+            if ext in _IMAGE_EXTS:
+                continue
         text = a.get_text(strip=True) or host
         seen.add(href)
         out.append({'label': text[:80], 'host': host, 'url': href})
@@ -333,7 +356,9 @@ def fetch_thread(url_or_id: str) -> dict[str, Any]:
     downloads: list[dict[str, str]] = []
     if op_body is not None:
         sample_images = _extract_images(op_body)
-        downloads = _extract_downloads(op_body)
+        # Pass samples so attachment-image URLs are filtered out of Downloads
+        # (they belong in the gallery, not the Downloads tab).
+        downloads = _extract_downloads(op_body, sample_image_urls=sample_images)
         if not image and sample_images:
             image = sample_images[0]
 
@@ -394,3 +419,53 @@ def save_cover_to_game(game, url: str | None) -> None:
         return
     filename, data = result
     game.cover_image.save(filename, ContentFile(data), save=False)
+
+
+def download_samples(urls: list[str], thread_id: str) -> list[str]:
+    """Download every F95 sample image to ``MEDIA_ROOT/samples/f95-<thread_id>/NN.<ext>``.
+
+    Uses the same session headers as ``_fetch`` (Cloudflare clearance +
+    xf_session cookies, captured-at-login UA) so ``attachments.f95zone.to``
+    images succeed — the dlsite downloader's generic UA/Referer can't
+    fetch those because they require a valid F95 session.
+
+    Returns MEDIA-relative paths suitable for ``{{ MEDIA_URL }}path``.
+    Already-downloaded files are skipped so refresh is cheap.
+    """
+    from django.conf import settings  # local import: app-loading races
+
+    rel_dir = Path('samples') / f'f95-{thread_id}'
+    abs_dir = Path(settings.MEDIA_ROOT) / rel_dir
+    abs_dir.mkdir(parents=True, exist_ok=True)
+
+    headers = _session_headers()
+    headers['Referer'] = 'https://f95zone.to/'
+
+    results: list[str] = []
+    for i, raw in enumerate(urls or [], start=1):
+        url = (raw or '').strip()
+        if not url:
+            continue
+        if url.startswith('//'):
+            url = 'https:' + url
+        if not url.startswith('http'):
+            continue
+        ext = Path(url.split('?')[0]).suffix.lower()
+        if ext not in _IMAGE_EXTS:
+            # Unknown extension — guess .jpg so the file at least has a
+            # suffix the browser/OS can render.
+            ext = '.jpg'
+        rel_path = rel_dir / f'{i:02d}{ext}'
+        abs_path = Path(settings.MEDIA_ROOT) / rel_path
+        if not abs_path.exists():
+            request = Request(url, headers=headers)
+            try:
+                with urlopen(request, timeout=30.0) as resp:
+                    data = resp.read()
+            except (URLError, TimeoutError) as exc:
+                log.warning('f95 sample %s/%s download failed (%s): %s',
+                            thread_id, i, url, exc)
+                continue
+            abs_path.write_bytes(data)
+        results.append(str(rel_path).replace('\\', '/'))
+    return results

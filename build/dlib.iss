@@ -4,7 +4,7 @@
 ;            or run on the command line:
 ;            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\dlib.iss
 ;
-; Output:    build\dist\Setup-DLib-0.1.10.exe
+; Output:    build\dist\Setup-DLib-0.1.11.exe
 ;
 ; Inno Setup is free: https://jrsoftware.org/isdl.php
 ;
@@ -13,7 +13,7 @@
 ; and is NOT removed by the uninstaller, so reinstalling preserves the library.
 
 #define MyAppName "DLib"
-#define MyAppVersion "0.1.10"
+#define MyAppVersion "0.1.11"
 #define MyAppPublisher "DLib"
 #define MyAppExeName "DLib.exe"
 

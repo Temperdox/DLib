@@ -312,8 +312,12 @@ def _apply_f95zone_metadata(game: Game, data: dict) -> Game:
     if game.cover_url and game.cover_url in game.sample_images:
         game.sample_images = [u for u in game.sample_images if u != game.cover_url]
     try:
+        # Use the F95-aware downloader — attachments.f95zone.to images
+        # require the captured session cookies + UA + Referer to fetch.
+        # dlsite's generic downloader silently fails for those, which is
+        # why the gallery used to fall back to remote preview URLs.
         game.gallery_images = (
-            dlsite_client.download_samples(game.sample_images, game.source_id)
+            f95zone_client.download_samples(game.sample_images, game.source_id)
             if game.sample_images else []
         )
     except Exception:
@@ -1099,7 +1103,7 @@ def api_link(request):
 # ---------------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_APP_VERSION = '0.1.10'
+EXPORT_APP_VERSION = '0.1.11'
 
 
 def _stream_then_unlink(path: str):
@@ -1299,7 +1303,7 @@ def api_health(request):
     return JsonResponse({
         'ok': True,
         'app': 'DLib',
-        'version': '0.1.10',
+        'version': '0.1.11',
         'sources': [Game.SOURCE_DLSITE, Game.SOURCE_F95ZONE],
         'games': Game.objects.count(),
     })
