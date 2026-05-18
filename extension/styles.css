@@ -254,10 +254,39 @@ body.dlib-bad-page input[type="submit"][value*="buy" i] {
     text-decoration: line-through !important;
 }
 
-/* Toolbar that lives at the top-right of the OP cover image — holds the
-   status pill plus action buttons (Add / Mark bad / Unmark bad). All
-   buttons share the same width (stretch to the widest child) so the
-   stack looks like a clean column instead of a ragged-edge list. */
+/* Primary action toolbar: a horizontal row prepended to the OP body so
+   it's always visible regardless of whether the post has a cover image.
+   Stands out as a thin dark strip with a blue left-accent. */
+.dlib-inline-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 14px;
+    margin: 0 0 14px;
+    background: rgba(15, 17, 22, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: 4px solid #4a8fd6;
+    border-radius: 6px;
+    align-items: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+.dlib-inline-toolbar::before {
+    content: 'DLib';
+    font-size: 11px;
+    font-weight: 800;
+    color: #4a8fd6;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    margin-right: 4px;
+}
+.dlib-inline-toolbar .dlib-action-btn {
+    flex: 0 0 auto;
+    box-sizing: border-box;
+}
+
+/* Fallback toolbar (when there IS an image but no suitable inline host) —
+   sits at the top-right of the OP cover image. All buttons share the
+   same width so the stack reads as a clean column. */
 .dlib-pill-wrap {
     position: absolute;
     top: 10px;

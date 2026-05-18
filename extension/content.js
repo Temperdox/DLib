@@ -441,6 +441,95 @@
         return bits.join('|');
     }
 
+    function _buildToolbarButtons(host, payload) {
+        const url = location.href;
+        const inLibrary = !!(payload && payload.found);
+        if (!inLibrary) {
+            host.appendChild(makeActionBtn('+ Add to library', 'add',
+                () => upsertViaSw(url, {}),
+                { workingText: 'Adding…',
+                  toastWorking: 'Adding game to your DLib library…',
+                  toastSuccess: '✓ Added to library' }));
+            host.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
+                () => upsertViaSw(url, { is_favorite: true }),
+                { workingText: 'Saving…',
+                  toastSuccess: '★ Marked as favorite' }));
+            host.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
+                () => upsertViaSw(url, { is_bad: true }),
+                { workingText: 'Saving…',
+                  toastSuccess: '⚠ Marked as bad' }));
+        } else {
+            if (payload.is_favorite) {
+                host.appendChild(makeActionBtn('★ Unfavorite', '',
+                    () => upsertViaSw(url, { is_favorite: false }),
+                    { workingText: 'Saving…',
+                      toastSuccess: 'Removed from favorites' }));
+            } else {
+                host.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
+                    () => upsertViaSw(url, { is_favorite: true }),
+                    { workingText: 'Saving…',
+                      toastSuccess: '★ Marked as favorite' }));
+            }
+            if (payload.is_bad) {
+                host.appendChild(makeActionBtn('✓ Unmark bad', '',
+                    () => upsertViaSw(url, { is_bad: false }),
+                    { workingText: 'Saving…',
+                      toastSuccess: 'Bad mark cleared' }));
+            } else {
+                host.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
+                    () => upsertViaSw(url, { is_bad: true }),
+                    { workingText: 'Saving…',
+                      toastSuccess: '⚠ Marked as bad' }));
+            }
+        }
+    }
+
+    function findOpInlineHost() {
+        const lower = location.href.toLowerCase();
+        if (lower.includes('f95zone.to')) {
+            const op = document.querySelector('article.message');
+            if (!op) return null;
+            return op.querySelector(
+                '.bbWrapper, .messageContent, .message-userContent'
+            );
+        }
+        if (lower.includes('dlsite.com')) {
+            return document.querySelector(
+                '#work_outline, .work_outline_area, '
+                + '.work_buy_title, #main_inner'
+            );
+        }
+        return null;
+    }
+
+    /** Prepend a horizontal toolbar above the OP body so the buttons are
+     *  always visible — independent of whether the OP has a cover image
+     *  or what its dimensions are. Returns true if it placed/updated the
+     *  toolbar, false if no suitable host element was found.
+     */
+    function placeActionsInline(payload) {
+        const host = findOpInlineHost();
+        if (!host) return false;
+
+        const sig = _toolbarSig(payload);
+        let toolbar = host.querySelector(':scope > .dlib-inline-toolbar');
+        if (toolbar && toolbar.dataset.dlibSig === sig) return true;
+
+        if (!toolbar) {
+            toolbar = document.createElement('div');
+            toolbar.className = 'dlib-inline-toolbar';
+            host.insertBefore(toolbar, host.firstChild);
+        }
+        toolbar.dataset.dlibSig = sig;
+        toolbar.innerHTML = '';
+        _buildToolbarButtons(toolbar, payload);
+        return true;
+    }
+
+    function removeInlineToolbar() {
+        document.querySelectorAll('.dlib-inline-toolbar').forEach(t => t.remove());
+    }
+
     function placeActionsOnImage(img, payload) {
         // Page banner is now the primary status indicator, so this toolbar
         // only carries action buttons (no redundant on-image pill).
@@ -468,49 +557,11 @@
         wrap.dataset.dlibSig = sig;
 
         wrap.innerHTML = '';
+        _buildToolbarButtons(wrap, payload);
+    }
 
-        const url = location.href;
-        const inLibrary = !!(payload && payload.found);
-        if (!inLibrary) {
-            wrap.appendChild(makeActionBtn('+ Add to library', 'add',
-                () => upsertViaSw(url, {}),
-                { workingText: 'Adding…',
-                  toastWorking: 'Adding game to your DLib library…',
-                  toastSuccess: '✓ Added to library' }));
-            wrap.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
-                () => upsertViaSw(url, { is_favorite: true }),
-                { workingText: 'Saving…',
-                  toastWorking: 'Marking favorite…',
-                  toastSuccess: '★ Marked as favorite' }));
-            wrap.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
-                () => upsertViaSw(url, { is_bad: true }),
-                { workingText: 'Saving…',
-                  toastWorking: 'Marking as bad…',
-                  toastSuccess: '⚠ Marked as bad' }));
-        } else {
-            if (payload.is_favorite) {
-                wrap.appendChild(makeActionBtn('★ Unfavorite', '',
-                    () => upsertViaSw(url, { is_favorite: false }),
-                    { workingText: 'Saving…',
-                      toastSuccess: 'Removed from favorites' }));
-            } else {
-                wrap.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
-                    () => upsertViaSw(url, { is_favorite: true }),
-                    { workingText: 'Saving…',
-                      toastSuccess: '★ Marked as favorite' }));
-            }
-            if (payload.is_bad) {
-                wrap.appendChild(makeActionBtn('✓ Unmark bad', '',
-                    () => upsertViaSw(url, { is_bad: false }),
-                    { workingText: 'Saving…',
-                      toastSuccess: 'Bad mark cleared' }));
-            } else {
-                wrap.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
-                    () => upsertViaSw(url, { is_bad: true }),
-                    { workingText: 'Saving…',
-                      toastSuccess: '⚠ Marked as bad' }));
-            }
-        }
+    function removeImageToolbar() {
+        document.querySelectorAll('.dlib-pill-wrap').forEach(w => w.remove());
     }
 
     // ----- page-wide BAD treatment (banner + grayscale + link disable) -----
@@ -694,11 +745,21 @@
 
             // Handle the current page (game we're viewing).
             if (currentPage) {
-                const img = currentPage.source === 'dlsite'
-                    ? findDlsiteProductImage()
-                    : findOpCoverImage();
-                if (img) placeActionsOnImage(img, currentPayload || { found: false });
-                applyPageState(currentPayload || { found: false });
+                const visiblePayload = currentPayload || { found: false };
+
+                // Prefer an inline toolbar prepended to the OP body — always
+                // visible even when the post has no big cover image. Fall back
+                // to an image overlay if no suitable inline host is found.
+                const inlinePlaced = placeActionsInline(visiblePayload);
+                if (inlinePlaced) {
+                    removeImageToolbar();
+                } else {
+                    const img = currentPage.source === 'dlsite'
+                        ? findDlsiteProductImage()
+                        : findOpCoverImage();
+                    if (img) placeActionsOnImage(img, visiblePayload);
+                }
+                applyPageState(visiblePayload);
 
                 // F95 cross-link: if we're on a F95 thread page whose OP body
                 // contains a DLsite link, and that DLsite game IS in the
@@ -728,6 +789,7 @@
     // wipe the buttons the user is hovering.
     const OWN_SELECTORS = [
         '.dlib-pill-wrap',
+        '.dlib-inline-toolbar',
         '.dlib-page-banner',
         '.dlib-card-banner',
         '#dlib-toast-host',
