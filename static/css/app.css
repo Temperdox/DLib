@@ -135,6 +135,31 @@ textarea.text-input:focus {
 .btn:active {
     transform: translateY(1px);
 }
+/* HTMX adds .htmx-request to any element with an in-flight request.
+   Use it to make EVERY action button show visible loading state — fixes
+   the long-standing complaint about clicking a button and seeing nothing
+   happen for 5–60 seconds while the server is busy. */
+.btn.htmx-request,
+.btn[disabled] {
+    opacity: 0.7;
+    cursor: progress !important;
+    pointer-events: none;
+}
+.btn.htmx-request::before {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: dlib-spin 0.7s linear infinite;
+    vertical-align: -2px;
+}
+@keyframes dlib-spin {
+    to { transform: rotate(360deg); }
+}
 
 .btn-primary {
     background: var(--accent);

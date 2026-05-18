@@ -10,7 +10,14 @@
         <span class="dot"></span>
         <span>DLib</span>
     </a>
-    <a href="{% url 'library:library' %}" class="btn btn-ghost">← Back to library</a>
+    {# Use history.back() when possible so the browser restores the prior
+       library URL (with filters/sort/search/scroll) and its native scroll
+       position. Falls back to the library URL when this page was opened
+       directly (bookmark, deep link, page reload). #}
+    <a href="{% url 'library:library' %}" class="btn btn-ghost"
+       onclick="if(window.history.length>1 && document.referrer.includes(window.location.host)){event.preventDefault();window.history.back();}">
+        ← Back to library
+    </a>
     <div class="spacer"></div>
     <a class="btn btn-ghost btn-icon" href="{% url 'library:settings' %}" title="Settings">⚙</a>
 </header>
@@ -90,10 +97,13 @@
             </button>
             {% endif %}
             <button class="btn"
+                    id="refresh-metadata-btn"
                     hx-post="{% url 'library:refresh_metadata' game.pk %}"
-                    hx-target="#card-{{ game.pk }}"
-                    hx-swap="outerHTML"
-                    hx-on::after-request="window.location.reload()">
+                    hx-target="this"
+                    hx-swap="none"
+                    hx-disabled-elt="this"
+                    hx-on::before-request="this.dataset.origText=this.textContent; this.textContent='⏳ Refreshing (this can take 30-60s)…'"
+                    hx-on::after-request="if(event.detail.successful){this.textContent='✓ Done, reloading…'; window.location.reload();}else{this.textContent='✕ '+ (event.detail.xhr.responseText || 'Refresh failed') +' — click to retry'; this.disabled=false;}">
                 ↻ Refresh metadata
             </button>
         </div>

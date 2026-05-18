@@ -1103,7 +1103,7 @@ def api_link(request):
 # ---------------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_APP_VERSION = '0.1.11'
+EXPORT_APP_VERSION = '0.1.12'
 
 
 def _stream_then_unlink(path: str):
@@ -1303,7 +1303,7 @@ def api_health(request):
     return JsonResponse({
         'ok': True,
         'app': 'DLib',
-        'version': '0.1.11',
+        'version': '0.1.12',
         'sources': [Game.SOURCE_DLSITE, Game.SOURCE_F95ZONE],
         'games': Game.objects.count(),
     })

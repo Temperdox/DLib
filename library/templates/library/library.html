@@ -17,13 +17,15 @@
                    hx-trigger="input changed delay:250ms, search"
                    hx-target="#games-grid"
                    hx-swap="outerHTML"
-                   hx-include="[name=sort],[name=installed],[name=source],[name=show_bad],[name=favorites_only]">
+                   hx-include="[name=sort],[name=installed],[name=source],[name=show_bad],[name=favorites_only]"
+                   oninput="dlibSyncUrl()">
             <select name="sort" class="search-input sort-select"
                     hx-get="{% url 'library:games_grid_partial' %}"
                     hx-trigger="change"
                     hx-target="#games-grid"
                     hx-swap="outerHTML"
-                    hx-include="[name=q],[name=installed],[name=source],[name=show_bad],[name=favorites_only]">
+                    hx-include="[name=q],[name=installed],[name=source],[name=show_bad],[name=favorites_only]"
+                    onchange="dlibSyncUrl()">
                 {% for key, choice in sort_choices.items %}
                     <option value="{{ key }}" {% if sort == key %}selected{% endif %}>{{ choice.1 }}</option>
                 {% endfor %}
@@ -149,10 +151,7 @@
             swap: 'outerHTML',
             values: values,
         });
-        var url = new URL(window.location);
-        if (value) url.searchParams.set(name, value);
-        else url.searchParams.delete(name);
-        history.replaceState(null, '', url);
+        dlibSyncUrl();
         // Active state for the clicked chip's neighbours only.
         var grp = event.target.closest('.chip-group');
         if (grp) {
@@ -160,5 +159,78 @@
             event.target.classList.add('active');
         }
     }
+
+    // Reflect every filter (search, sort, chips, toggles) in the URL query
+    // string so going to a game detail and clicking Back lands you on the
+    // exact same library view. Uses replaceState so we don't pollute history
+    // with one entry per keystroke.
+    function dlibSyncUrl() {
+        var url = new URL(window.location);
+        ['q', 'sort', 'installed', 'source', 'show_bad', 'favorites_only'].forEach(function (name) {
+            var el = document.querySelector('[name=' + name + ']');
+            var v = el ? el.value : '';
+            if (v) url.searchParams.set(name, v);
+            else url.searchParams.delete(name);
+        });
+        try { history.replaceState(null, '', url); } catch (_) {}
+        // The scroll-position key includes the URL, so when filters change
+        // we don't accidentally jump to the OLD scroll position.
+        dlibSaveScroll();
+    }
+
+    // ---- Scroll-position persistence ------------------------------------
+    // Why this exists: browsers handle native scroll restoration on history
+    // back/forward, but only when the page is served from the bfcache. With
+    // HTMX swapping the grid in place + waitress's no-cache headers, that
+    // often doesn't kick in. So we mirror scrollY into sessionStorage and
+    // restore it on load — keyed by URL so a filtered view and an unfiltered
+    // view each remember their own scroll.
+    function _dlibScrollKey() {
+        return 'dlib:scroll:' + location.pathname + location.search;
+    }
+    var _dlibScrollTimer = null;
+    function dlibSaveScroll() {
+        clearTimeout(_dlibScrollTimer);
+        _dlibScrollTimer = setTimeout(function () {
+            try { sessionStorage.setItem(_dlibScrollKey(), String(window.scrollY)); }
+            catch (_) {}
+        }, 150);
+    }
+    window.addEventListener('scroll', dlibSaveScroll, { passive: true });
+
+    // Restore scroll on initial load (DOMContentLoaded + after the grid's
+    // images get any layout). We also disable the browser's own restoration
+    // so we don't fight it.
+    try { history.scrollRestoration = 'manual'; } catch (_) {}
+    function dlibRestoreScroll() {
+        var saved = null;
+        try { saved = sessionStorage.getItem(_dlibScrollKey()); } catch (_) {}
+        if (!saved) return;
+        var y = parseInt(saved, 10);
+        if (!isFinite(y)) return;
+        // Two passes: once on next frame for the basic case, once after a
+        // short delay so lazy-loaded card images can settle into final
+        // dimensions before we jump.
+        requestAnimationFrame(function () { window.scrollTo(0, y); });
+        setTimeout(function () { window.scrollTo(0, y); }, 250);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', dlibRestoreScroll);
+    } else {
+        dlibRestoreScroll();
+    }
+    // When the grid swaps in via HTMX, re-anchor scroll (Vue / image loads
+    // can shift content height after swap).
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+        if (e.target && e.target.id === 'games-grid') {
+            dlibRestoreScroll();
+        }
+    });
+    // Save scroll right before navigating away to capture the latest value
+    // (the debounced scroll listener might still have it pending).
+    window.addEventListener('pagehide', function () {
+        try { sessionStorage.setItem(_dlibScrollKey(), String(window.scrollY)); }
+        catch (_) {}
+    });
 </script>
 {% endblock %}
