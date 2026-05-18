@@ -234,16 +234,40 @@ def _find_op_body(soup):
 
 
 def _extract_images(op_body) -> list[str]:
-    """All non-chrome image URLs in the OP body, in document order, deduped."""
+    """Image URLs in the OP body, in document order, deduped.
+
+    F95Zone's inline ``<img src>`` is usually a Cloudflare-proxied THUMBNAIL
+    (blurry, downsized) — the full-size original is in the parent
+    ``<a href="https://attachments.f95zone.to/.../image.jpg">``. We prefer
+    the ``<a href>`` when present so the gallery downloads the high-res
+    file instead of the preview thumb that used to show up blurred in the
+    carousel.
+    """
     urls: list[str] = []
     seen: set[str] = set()
     for img in op_body.find_all('img'):
-        url = (img.get('src') or img.get('data-src')
+        raw = (img.get('src') or img.get('data-src')
                or img.get('data-url') or '').strip()
-        if not url or url.startswith('data:'):
+        if not raw or raw.startswith('data:'):
             continue
-        if any(s in url for s in _IMG_SKIP):
+        if any(s in raw for s in _IMG_SKIP):
             continue
+
+        # Prefer the parent <a> if it points at the full-size attachment.
+        url = ''
+        parent_a = img.find_parent('a')
+        if parent_a and parent_a.has_attr('href'):
+            href = parent_a['href'].strip()
+            href_low = href.lower()
+            ext = Path(href_low.split('?')[0]).suffix
+            if ('attachments.f95zone.to' in href_low and ext in _IMAGE_EXTS) \
+               or (ext in _IMAGE_EXTS and href.startswith('http')):
+                url = href
+
+        # Fall back to the img src if no full-size anchor.
+        if not url:
+            url = raw
+
         if url.startswith('//'):
             url = 'https:' + url
         elif url.startswith('/'):
@@ -421,7 +445,8 @@ def save_cover_to_game(game, url: str | None) -> None:
     game.cover_image.save(filename, ContentFile(data), save=False)
 
 
-def download_samples(urls: list[str], thread_id: str) -> list[str]:
+def download_samples(urls: list[str], thread_id: str,
+                     force: bool = True) -> list[str]:
     """Download every F95 sample image to ``MEDIA_ROOT/samples/f95-<thread_id>/NN.<ext>``.
 
     Uses the same session headers as ``_fetch`` (Cloudflare clearance +
@@ -429,18 +454,35 @@ def download_samples(urls: list[str], thread_id: str) -> list[str]:
     images succeed — the dlsite downloader's generic UA/Referer can't
     fetch those because they require a valid F95 session.
 
+    When ``force=True`` (the default for refresh-metadata) the existing
+    ``f95-<thread_id>/`` directory is wiped first so old blurry-thumbnail
+    files left behind by previous extraction logic get replaced with the
+    new full-size attachment originals. When called with ``force=False``
+    existing files are kept (cheap re-runs).
+
     Returns MEDIA-relative paths suitable for ``{{ MEDIA_URL }}path``.
-    Already-downloaded files are skipped so refresh is cheap.
     """
     from django.conf import settings  # local import: app-loading races
 
     rel_dir = Path('samples') / f'f95-{thread_id}'
     abs_dir = Path(settings.MEDIA_ROOT) / rel_dir
+    if force and abs_dir.exists():
+        # Wipe stale files so old preview-thumb downloads can't shadow new
+        # full-size ones (the per-index NN.ext filenames would otherwise
+        # short-circuit re-download).
+        for old in abs_dir.iterdir():
+            try:
+                if old.is_file():
+                    old.unlink()
+            except OSError:
+                pass
     abs_dir.mkdir(parents=True, exist_ok=True)
 
     headers = _session_headers()
     headers['Referer'] = 'https://f95zone.to/'
 
+    saved = 0
+    failed = 0
     results: list[str] = []
     for i, raw in enumerate(urls or [], start=1):
         url = (raw or '').strip()
@@ -463,9 +505,13 @@ def download_samples(urls: list[str], thread_id: str) -> list[str]:
                 with urlopen(request, timeout=30.0) as resp:
                     data = resp.read()
             except (URLError, TimeoutError) as exc:
+                failed += 1
                 log.warning('f95 sample %s/%s download failed (%s): %s',
                             thread_id, i, url, exc)
                 continue
             abs_path.write_bytes(data)
+            saved += 1
         results.append(str(rel_path).replace('\\', '/'))
+    log.info('f95 download_samples thread=%s requested=%d saved=%d failed=%d kept=%d',
+             thread_id, len(urls or []), saved, failed, len(results))
     return results

@@ -86,8 +86,8 @@ def build(clean: bool) -> int:
         '--company-name=DLib',
         '--product-name=DLib',
         '--file-description=DLib - DLsite game library',
-        '--product-version=0.1.12',
-        '--file-version=0.1.12.0',
+        '--product-version=0.1.13',
+        '--file-version=0.1.13.0',
         f'--output-dir={OUTPUT_DIR}',
         '--output-filename=DLib.exe',
         '--remove-output',     # delete intermediate build files

@@ -25,7 +25,13 @@ def gallery_image_list(game):
     locals_ = list(game.gallery_images or [])
     if locals_:
         media_url = settings.MEDIA_URL.rstrip('/') + '/'
-        urls.extend(media_url + p.lstrip('/') for p in locals_)
+        # Cache-bust local sample URLs with the metadata refresh timestamp
+        # so the browser doesn't keep showing the OLD cached file bytes
+        # after a Refresh metadata replaces the contents on disk.
+        cache_bust = ''
+        if getattr(game, 'metadata_refreshed_at', None):
+            cache_bust = '?v=' + str(int(game.metadata_refreshed_at.timestamp()))
+        urls.extend(media_url + p.lstrip('/') + cache_bust for p in locals_)
     else:
         urls.extend(u for u in (game.sample_images or []) if u)
 

@@ -10,10 +10,12 @@
         <span class="dot"></span>
         <span>DLib</span>
     </a>
-    {# Use history.back() when possible so the browser restores the prior
-       library URL (with filters/sort/search/scroll) and its native scroll
-       position. Falls back to the library URL when this page was opened
-       directly (bookmark, deep link, page reload). #}
+    {% comment %}
+    Use history.back() when possible so the browser restores the prior
+    library URL (with filters/sort/search/scroll) and its native scroll
+    position. Falls back to the library URL when this page was opened
+    directly (bookmark, deep link, page reload).
+    {% endcomment %}
     <a href="{% url 'library:library' %}" class="btn btn-ghost"
        onclick="if(window.history.length>1 && document.referrer.includes(window.location.host)){event.preventDefault();window.history.back();}">
         ← Back to library
