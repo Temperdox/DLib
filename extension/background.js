@@ -163,9 +163,28 @@ async function handleLookup(items) {
         return { results: {}, server_up: serverReachable, recovered: false };
     }
     const uniqueUrls = Array.from(new Set(items.map(i => i.url)));
+    console.log('[DLib SW] handleLookup → urls=' + uniqueUrls.length, uniqueUrls);
 
     const apiResp = await tryApi(uniqueUrls);
 
+    if (apiResp.ok) {
+        // Log per-URL flag state so we can see whether the server actually
+        // returns is_bad=true after an upsert that asked for it.
+        const summary = {};
+        for (const u in apiResp.results) {
+            const p = apiResp.results[u];
+            if (p && p.found) {
+                summary[u] = {
+                    found: true, is_bad: p.is_bad, is_favorite: p.is_favorite,
+                };
+            } else {
+                summary[u] = { found: false };
+            }
+        }
+        console.log('[DLib SW] handleLookup ←', summary);
+    } else {
+        console.warn('[DLib SW] handleLookup ← API down');
+    }
     if (apiResp.ok) {
         // Persist found entries, evict not-found ones from cache.
         const toCache = [];
@@ -258,19 +277,34 @@ async function handleUpsert(url, changes) {
         ? [activeBase, ...API_BASES.filter(b => b !== activeBase)]
         : API_BASES;
     let lastErr = null;
+    const body = { url, ...(changes || {}) };
+    console.log('[DLib SW] handleUpsert →', body);
     for (const base of bases) {
         try {
             const resp = await fetch(base + '/api/v1/upsert/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, ...(changes || {}) }),
+                body: JSON.stringify(body),
                 cache: 'no-store',
             });
             if (!resp.ok) {
-                lastErr = new Error('HTTP ' + resp.status + ' ' + (await resp.text()).slice(0, 200));
+                const text = await resp.text();
+                lastErr = new Error('HTTP ' + resp.status + ' ' + text.slice(0, 200));
+                console.warn('[DLib SW] handleUpsert ← HTTP', resp.status,
+                             'base=' + base, 'body=' + text.slice(0, 400));
                 continue;
             }
             const data = await resp.json();
+            console.log('[DLib SW] handleUpsert ←', {
+                status: resp.status,
+                base,
+                found: data && data.found,
+                is_bad: data && data.is_bad,
+                is_favorite: data && data.is_favorite,
+                created: data && data.created,
+                source: data && data.source,
+                source_id: data && data.source_id,
+            });
             activeBase = base;
             serverReachable = true;
             if (data && data.found && data.source && data.source_id) {
@@ -278,12 +312,14 @@ async function handleUpsert(url, changes) {
             }
             return { ok: true, payload: data };
         } catch (e) {
+            console.warn('[DLib SW] handleUpsert THREW', String(e), 'base=' + base);
             lastErr = e;
         }
     }
     if (serverReachable) {
         serverReachable = false;
     }
+    console.error('[DLib SW] handleUpsert FAILED all bases', String(lastErr));
     return { ok: false, error: String(lastErr || 'unreachable') };
 }
 

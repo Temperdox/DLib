@@ -297,20 +297,43 @@
         scan({ requeryAll: true });
     }
 
+    // ---- Verbose debug logging (filter console with "[DLib]") ----------
+    // Lets us trace the exact request/response flow for upsert + scan so
+    // we can see whether a flag like is_bad actually persisted server-side
+    // or got dropped somewhere in the extension/server pipeline.
+    function dlog(...args) {
+        try { console.log('[DLib]', ...args); } catch (_) {}
+    }
+
     function upsertViaSw(url, changes) {
+        const reqId = Math.random().toString(36).slice(2, 8);
+        dlog('upsert→SW', reqId, { url, changes });
         return new Promise((resolve) => {
             try {
                 chrome.runtime.sendMessage(
                     { type: 'upsert', url, changes },
                     (response) => {
                         if (chrome.runtime.lastError) {
+                            dlog('upsert←SW LASTERROR', reqId,
+                                 chrome.runtime.lastError.message);
                             resolve({ ok: false, error: chrome.runtime.lastError.message });
                             return;
                         }
+                        const summary = response && response.payload
+                            ? { ok: response.ok,
+                                found: response.payload.found,
+                                is_bad: response.payload.is_bad,
+                                is_favorite: response.payload.is_favorite,
+                                created: response.payload.created,
+                                source: response.payload.source,
+                                source_id: response.payload.source_id }
+                            : response;
+                        dlog('upsert←SW', reqId, summary);
                         resolve(response || { ok: false });
                     }
                 );
             } catch (e) {
+                dlog('upsert→SW THREW', reqId, String(e));
                 resolve({ ok: false, error: String(e) });
             }
         });
@@ -448,10 +471,16 @@
     // before flipping the flag. Both calls share the same queue slot so
     // rapid clicks across buttons still serialize cleanly.
     async function addThenFlag(url, flagChanges, flagLabel) {
+        dlog('addThenFlag START', { url, flagChanges, flagLabel });
         const addResp = await upsertViaSw(url, {});
+        dlog('addThenFlag step1 done', {
+            ok: addResp && addResp.ok,
+            payload: addResp && addResp.payload,
+        });
         if (!addResp || addResp.ok === false) return addResp;
         const payload = addResp.payload || {};
         if (!payload.found || !payload.source) {
+            dlog('addThenFlag ABORT — add returned no game payload');
             return { ok: false, error: 'add returned no game payload' };
         }
         // Server already added — now apply the flag in a follow-up upsert.
@@ -459,6 +488,28 @@
         // API expects; the server's _resolve_game_by_source will hit the
         // row we just created, skip auto-add, and apply the flag.
         const flagResp = await upsertViaSw(url, flagChanges);
+        dlog('addThenFlag step2 done', {
+            ok: flagResp && flagResp.ok,
+            payload: flagResp && flagResp.payload,
+            requested_flag: flagChanges,
+        });
+
+        // Sanity check: did the server payload actually reflect the flag we
+        // sent? If not, the flag was silently dropped server-side and the
+        // user would be stuck clicking again to "re-apply" it.
+        if (flagResp && flagResp.ok && flagResp.payload) {
+            for (const k of Object.keys(flagChanges)) {
+                if (flagResp.payload[k] !== flagChanges[k]) {
+                    dlog('addThenFlag MISMATCH! server payload does not reflect requested flag',
+                         { key: k, requested: flagChanges[k], got: flagResp.payload[k] });
+                    return {
+                        ok: false,
+                        error: 'server did not persist ' + k + '=' + flagChanges[k]
+                               + ' (got ' + flagResp.payload[k] + ')',
+                    };
+                }
+            }
+        }
         if (!flagResp || flagResp.ok === false) {
             const errMsg = (flagResp && flagResp.error) || 'unknown error';
             return {
@@ -539,12 +590,22 @@
      */
     function placeActionsInline(payload) {
         const host = findOpInlineHost();
-        if (!host) return false;
+        if (!host) {
+            dlog('placeActionsInline: no host found');
+            return false;
+        }
 
         const sig = _toolbarSig(payload);
         let toolbar = host.querySelector(':scope > .dlib-inline-toolbar');
-        if (toolbar && toolbar.dataset.dlibSig === sig) return true;
+        if (toolbar && toolbar.dataset.dlibSig === sig) {
+            dlog('placeActionsInline: sig unchanged, skipping rebuild', sig);
+            return true;
+        }
 
+        dlog('placeActionsInline: REBUILDING', {
+            prev_sig: toolbar ? toolbar.dataset.dlibSig : '(none)',
+            new_sig: sig,
+        });
         if (!toolbar) {
             toolbar = document.createElement('div');
             toolbar.className = 'dlib-inline-toolbar';
@@ -700,8 +761,12 @@
     const currentKey = currentPage ? currentPage.source + ':' + currentPage.id : null;
 
     async function scan(opts) {
-        if (pending) return;
+        if (pending) {
+            dlog('scan SKIPPED — already pending', opts);
+            return;
+        }
         pending = true;
+        dlog('scan START', opts);
         try {
             const items = collectLinks();
 
@@ -776,6 +841,15 @@
             // Handle the current page (game we're viewing).
             if (currentPage) {
                 const visiblePayload = currentPayload || { found: false };
+                dlog('scan: currentPage payload', {
+                    url: location.href,
+                    source: currentPage.source,
+                    id: currentPage.id,
+                    found: visiblePayload.found,
+                    is_bad: visiblePayload.is_bad,
+                    is_favorite: visiblePayload.is_favorite,
+                    sig: _toolbarSig(visiblePayload),
+                });
 
                 // Prefer an inline toolbar prepended to the OP body — always
                 // visible even when the post has no big cover image. Fall back
