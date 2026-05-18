@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "DLib Library Overlay",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Overlay your DLib library state (downloaded / bad / running) on F95Zone and DLsite game links.",
     "browser_specific_settings": {
         "gecko": {

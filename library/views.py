@@ -885,7 +885,13 @@ def _autoadd_game(source: str, source_id: str, url: str) -> Game:
             dlsite_url=canonical_url,
         )
         game.save()
-        _apply_f95zone_metadata(game, data)
+        try:
+            _apply_f95zone_metadata(game, data)
+        except Exception:
+            # Metadata enrichment is best-effort. The game row is already
+            # persisted, so callers (api_upsert) can still apply user flags
+            # like is_bad / is_favorite. Refresh-metadata will retry later.
+            log.exception('F95Zone metadata enrichment failed for %s', source_id)
         return game
 
     settings_obj = AppSettings.load()
@@ -917,7 +923,14 @@ def _autoadd_game(source: str, source_id: str, url: str) -> Game:
         dlsite_url=canonical_url,
     )
     game.save()
-    _apply_dlsite_metadata(game, data)
+    try:
+        _apply_dlsite_metadata(game, data)
+    except Exception:
+        # Same rationale as above: the game row is committed, so don't let a
+        # metadata hiccup (sample download, malformed date, tag normalization)
+        # kill the whole upsert and force the user to click twice. The flags
+        # the caller wants to set (is_bad, is_favorite) must still go through.
+        log.exception('DLsite metadata enrichment failed for %s', source_id)
     return game
 
 
@@ -961,7 +974,14 @@ def api_upsert(request):
             created = True
         except Exception as exc:
             log.exception('api_upsert auto-add failed for %s', url)
-            return JsonResponse({'error': f'auto-add failed: {exc}'}, status=502)
+            # _autoadd_game's initial game.save() may already have committed
+            # before the exception (e.g. metadata enrichment crashed). Re-query
+            # — if the row is there, fall through and apply the caller's flags
+            # so they don't have to click again.
+            game = _resolve_game_by_source(source, source_id)
+            if game is None:
+                return JsonResponse({'error': f'auto-add failed: {exc}'}, status=502)
+            created = True
 
     update_fields: list[str] = []
     if 'is_bad' in body:
@@ -1060,7 +1080,7 @@ def api_link(request):
 # ---------------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_APP_VERSION = '0.1.1'
+EXPORT_APP_VERSION = '0.1.2'
 
 
 def _stream_then_unlink(path: str):
@@ -1260,7 +1280,7 @@ def api_health(request):
     return JsonResponse({
         'ok': True,
         'app': 'DLib',
-        'version': '0.1.1',
+        'version': '0.1.2',
         'sources': [Game.SOURCE_DLSITE, Game.SOURCE_F95ZONE],
         'games': Game.objects.count(),
     })
