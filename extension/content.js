@@ -441,6 +441,34 @@
         return bits.join('|');
     }
 
+    // Add the game first (no flags) then, only after the SW confirms the row
+    // exists, send a follow-up upsert with the requested flag. This is the
+    // belt-and-braces approach: even if the server's atomic add+mark path
+    // ever regresses, the extension still sees the game land in the library
+    // before flipping the flag. Both calls share the same queue slot so
+    // rapid clicks across buttons still serialize cleanly.
+    async function addThenFlag(url, flagChanges, flagLabel) {
+        const addResp = await upsertViaSw(url, {});
+        if (!addResp || addResp.ok === false) return addResp;
+        const payload = addResp.payload || {};
+        if (!payload.found || !payload.source) {
+            return { ok: false, error: 'add returned no game payload' };
+        }
+        // Server already added — now apply the flag in a follow-up upsert.
+        // We re-send `url` (not source/source_id) because that's what the
+        // API expects; the server's _resolve_game_by_source will hit the
+        // row we just created, skip auto-add, and apply the flag.
+        const flagResp = await upsertViaSw(url, flagChanges);
+        if (!flagResp || flagResp.ok === false) {
+            const errMsg = (flagResp && flagResp.error) || 'unknown error';
+            return {
+                ok: false,
+                error: 'added to library but ' + flagLabel + ' failed: ' + errMsg,
+            };
+        }
+        return flagResp;
+    }
+
     function _buildToolbarButtons(host, payload) {
         const url = location.href;
         const inLibrary = !!(payload && payload.found);
@@ -451,13 +479,15 @@
                   toastWorking: 'Adding game to your DLib library…',
                   toastSuccess: '✓ Added to library' }));
             host.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
-                () => upsertViaSw(url, { is_favorite: true }),
-                { workingText: 'Saving…',
-                  toastSuccess: '★ Marked as favorite' }));
+                () => addThenFlag(url, { is_favorite: true }, 'mark favorite'),
+                { workingText: 'Adding + marking…',
+                  toastWorking: 'Adding to library, then marking as favorite…',
+                  toastSuccess: '★ Added & marked as favorite' }));
             host.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
-                () => upsertViaSw(url, { is_bad: true }),
-                { workingText: 'Saving…',
-                  toastSuccess: '⚠ Marked as bad' }));
+                () => addThenFlag(url, { is_bad: true }, 'mark as bad'),
+                { workingText: 'Adding + marking…',
+                  toastWorking: 'Adding to library, then marking as bad…',
+                  toastSuccess: '⚠ Added & marked as bad' }));
         } else {
             if (payload.is_favorite) {
                 host.appendChild(makeActionBtn('★ Unfavorite', '',
