@@ -32,9 +32,12 @@ from .models import (
     AppSettings, Creator, Game, GameAlias, ManualGameTag, PlaySession, Tag,
 )
 from .services import (
+    auto_discover,
     dlsite_client,
+    event_bus,
     f95zone_client,
     install_scanner,
+    manual_add as manual_add_service,
     native_dialog,
     process_tracker,
 )
@@ -93,6 +96,13 @@ def _filtered_games(request):
 
 
 def library_view(request):
+    # Auto-discover newly-downloaded games + verify existing paths before
+    # building the queryset. Best-effort: a sweep failure must never break
+    # the page render.
+    try:
+        auto_discover.refresh_all()
+    except Exception:
+        log.exception('auto-discover sweep failed')
     games, query, sort = _filtered_games(request)
     settings_obj = AppSettings.load()
     context = {
@@ -356,6 +366,135 @@ def _fetch_and_apply(game: Game) -> None:
             locale=settings_obj.locale or 'en_US',
         )
         _apply_dlsite_metadata(game, data)
+
+
+_MANUAL_AGE_CHOICES = {Game.AGE_ALL, Game.AGE_R15, Game.AGE_R18}
+
+
+@require_POST
+def manual_add_game(request):
+    """Create a Game from a fully user-supplied form.
+
+    Required fields:
+      title           - free text, the game's title
+      creator         - free text, becomes a Creator row (created if new)
+      primary_url     - the canonical link (stored in dlsite_url)
+      tags            - newline- or comma-separated, at least one non-empty
+
+    Optional:
+      extra_urls      - one URL per line, listed under download_links
+      description     - free text
+      age_category    - all_ages / r15 / r18  (defaults to all_ages)
+      work_type       - free text (e.g. "RPGM Completed v1.0")
+      cover_url       - remote image URL for the cover
+      cover_file      - uploaded image (takes precedence over cover_url)
+      gallery_urls    - newline-separated remote image URLs
+      gallery_files   - 0..N uploaded images
+    """
+    title = (request.POST.get('title') or '').strip()
+    creator_name = (request.POST.get('creator') or '').strip()
+    primary_url = (request.POST.get('primary_url') or '').strip()
+    raw_tags = (request.POST.get('tags') or '').strip()
+
+    # Parse tags first so we can validate the "at least one" requirement
+    # against the canonicalised list (whitespace-only entries don't count).
+    tag_names: list[str] = []
+    if raw_tags:
+        for chunk in raw_tags.replace(',', '\n').splitlines():
+            name = chunk.strip()
+            if name and name not in tag_names:
+                tag_names.append(name)
+
+    missing: list[str] = []
+    if not title:
+        missing.append('title')
+    if not creator_name:
+        missing.append('creator')
+    if not primary_url:
+        missing.append('primary URL')
+    if not tag_names:
+        missing.append('at least one tag')
+    if missing:
+        return HttpResponse(
+            'Missing required fields: ' + ', '.join(missing) + '.',
+            status=400,
+        )
+
+    age_category = (request.POST.get('age_category') or Game.AGE_ALL).strip()
+    if age_category not in _MANUAL_AGE_CHOICES:
+        age_category = Game.AGE_ALL
+    work_type = (request.POST.get('work_type') or '').strip()
+    description = (request.POST.get('description') or '').strip()
+
+    extra_urls: list[str] = []
+    for line in (request.POST.get('extra_urls') or '').splitlines():
+        line = line.strip()
+        if line:
+            extra_urls.append(line)
+
+    download_links = [
+        {'host': _hostname_from(u), 'label': 'Link', 'url': u}
+        for u in extra_urls
+    ]
+
+    source_id = manual_add_service.new_source_id()
+    creator, _ = Creator.objects.get_or_create(name=creator_name)
+
+    game = Game(
+        source=Game.SOURCE_MANUAL,
+        source_id=source_id,
+        title=title,
+        circle=creator,
+        dlsite_url=primary_url,
+        description=description,
+        age_category=age_category,
+        work_type=work_type,
+        download_links=download_links,
+    )
+
+    # Cover: uploaded file wins over URL. save=False so we batch with
+    # the gallery write below into a single save() call.
+    cover_file = request.FILES.get('cover_file')
+    manual_add_service.save_cover(game, cover_file or (request.POST.get('cover_url') or '').strip() or None)
+
+    # Gallery: combine uploaded files + URL lines (uploaded first so they
+    # take the lower indices in the saved filenames — deterministic order).
+    gallery_files = request.FILES.getlist('gallery_files')
+    gallery_urls = [
+        line.strip() for line in (request.POST.get('gallery_urls') or '').splitlines()
+        if line.strip()
+    ]
+    gallery_items = list(gallery_files) + gallery_urls
+    game.sample_images = [u for u in gallery_urls]
+    game.gallery_images = manual_add_service.save_gallery(source_id, gallery_items)
+
+    game.save()
+
+    # Apply tags. Mark every one as manual so a future "refresh metadata"
+    # (which is a no-op for SOURCE_MANUAL anyway) wouldn't wipe them.
+    tag_objs = _normalize_tags(tag_names, Tag.GENRE)
+    game.tags.set(tag_objs)
+    for tag in tag_objs:
+        ManualGameTag.objects.get_or_create(game=game, tag=tag)
+    game.save(update_fields=['updated_at'])
+
+    if request.headers.get('HX-Request'):
+        response = render(request, 'library/partials/_game_card.html', {
+            'game': game, 'is_running': False,
+        })
+        response['HX-Trigger'] = 'gameAdded'
+        return response
+    return redirect(game.get_absolute_url())
+
+
+def _hostname_from(url: str) -> str:
+    """Extract a short hostname for the download_links display."""
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url).hostname or ''
+    except ValueError:
+        host = ''
+    return host.lower().removeprefix('www.') or 'link'
 
 
 @require_POST
@@ -1103,7 +1242,7 @@ def api_link(request):
 # ---------------------------------------------------------------------------
 
 EXPORT_SCHEMA_VERSION = 1
-EXPORT_APP_VERSION = '0.1.14'
+EXPORT_APP_VERSION = '0.1.15'
 
 
 def _stream_then_unlink(path: str):
@@ -1299,33 +1438,126 @@ def import_data(request):
 
 @csrf_exempt
 @require_GET
+def api_all_games(request):
+    """Bulk dump of every (source, source_id) → state in the library.
+
+    The browser extension calls this on startup, after reconnect, and once
+    an hour to populate its IndexedDB cache. Without it, the cache fills
+    only lazily (whenever the user visits a game's page), so games they
+    haven't browsed recently show no pill when DLib is offline.
+
+    Each ``GameAlias`` row is emitted as its own entry that mirrors the
+    canonical game's payload but under the alias's (source, source_id) key —
+    so a page on either side of an alias resolves correctly from the cache.
+    """
+    games = (
+        Game.objects.all()
+        .select_related('circle')
+        .prefetch_related('tags')
+    )
+    entries: list[dict] = []
+    for g in games:
+        entries.append(_game_to_api(g))
+
+    aliases = GameAlias.objects.select_related('game').all()
+    for alias in aliases:
+        if alias.game is None:
+            continue
+        payload = _game_to_api(alias.game)
+        # Override the lookup key so the cache stores this row under the
+        # alias's source/source_id. The library_url + canonical id still
+        # point at the primary game.
+        payload['source'] = alias.source
+        payload['source_id'] = alias.source_id
+        payload['_alias_of'] = {
+            'source': alias.game.source,
+            'source_id': alias.game.source_id,
+        }
+        entries.append(payload)
+
+    return JsonResponse({
+        'games': entries,
+        'count': len(entries),
+        'generated_at': timezone.now().isoformat(),
+    })
+
+
+@csrf_exempt
+@require_GET
 def api_health(request):
     return JsonResponse({
         'ok': True,
         'app': 'DLib',
-        'version': '0.1.14',
+        'version': '0.1.15',
         'sources': [Game.SOURCE_DLSITE, Game.SOURCE_F95ZONE],
         'games': Game.objects.count(),
     })
 
 
 @require_GET
-def api_changes(request):
-    """Cheap version token used by the library page poller.
+def event_stream(request):
+    """Server-Sent Events feed used by every page to stay in sync.
 
-    Returns counts + the most recent updated_at/added_at timestamps. The
-    library page compares the JSON string to its last-seen value; if it
-    differs it kicks an HTMX grid refresh. No grid data fetched on each
-    poll, just this small payload.
+    Emits events published to ``event_bus`` by model signal handlers
+    and the process tracker. The browser's ``EventSource`` reconnects
+    automatically on drop, so we don't track per-client state.
+
+    Why the queue timeout is short (1s, not 15s):
+
+    waitress is a synchronous WSGI server — each in-flight request
+    pins one worker thread. The only way it notices a dead peer is
+    when a write fails, which can only happen when the generator
+    yields. If we block on ``q.get(timeout=15)`` and the user navigates
+    away, the worker stays pinned for up to 15s waiting on a queue
+    that will never receive an event. Four-or-five quick navigations
+    in a row would exhaust the 8-thread pool, freezing the UI until
+    the timeouts elapse — exactly the symptom that prompted this
+    rewrite.
+
+    So we poll the queue every 1s and yield a keep-alive comment on
+    each idle tick. A dead peer is detected on the next yield (~1s
+    after disconnect) and the generator exits via GeneratorExit. The
+    1-byte/sec keep-alive cost is irrelevant for a single-user desktop
+    app.
     """
-    from django.db.models import Count, Max
-    agg = Game.objects.aggregate(
-        count=Count('id'),
-        updated=Max('updated_at'),
-        added=Max('added_at'),
-    )
-    return JsonResponse({
-        'count': agg['count'] or 0,
-        'updated': agg['updated'].isoformat() if agg['updated'] else '',
-        'added': agg['added'].isoformat() if agg['added'] else '',
-    })
+    import json
+    import queue
+
+    from django.db import connection
+
+    # Close the per-request DB connection before we enter the long
+    # streaming loop — we don't issue any queries here, and holding it
+    # would keep one of waitress's worker threads pinned to a DB conn.
+    connection.close()
+
+    def stream():
+        with event_bus.subscriber() as q:
+            try:
+                yield 'retry: 3000\n\n'
+                yield 'event: hello\ndata: {}\n\n'
+                while True:
+                    try:
+                        event = q.get(timeout=1)
+                    except queue.Empty:
+                        # Idle tick — yield a comment so a dead peer
+                        # surfaces as a write failure within ~1s.
+                        yield ': ping\n\n'
+                        continue
+                    try:
+                        payload = json.dumps(event.get('data', {}))
+                    except (TypeError, ValueError):
+                        payload = '{}'
+                    event_type = event.get('type', 'message')
+                    yield f'event: {event_type}\ndata: {payload}\n\n'
+            except GeneratorExit:
+                # Client disconnected (page navigation, tab close).
+                # The `with` block above unsubscribes us cleanly. Don't
+                # log — this is the normal end-of-life path.
+                return
+
+    response = StreamingHttpResponse(stream(), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache, no-transform'
+    response['X-Accel-Buffering'] = 'no'  # disable proxy buffering
+    return response
+
+

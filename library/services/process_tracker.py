@@ -94,6 +94,8 @@ def start_html_session(game) -> tuple[int, float]:
             'session_id': session.pk,
             'started_at': started_at,
         }
+    from library.services import event_bus
+    event_bus.publish('game.running', {'game_id': game.pk})
     log.info('launched HTML game %s session %s', game.pk, session.pk)
     return session.pk, started_at
 
@@ -117,6 +119,7 @@ def _finalize(game_id: int, session_id: int, elapsed_seconds: int) -> None:
     from django.db.models import F
 
     from library.models import Game, PlaySession
+    from library.services import event_bus
 
     now = timezone.now()
     PlaySession.objects.filter(pk=session_id).update(
@@ -126,7 +129,11 @@ def _finalize(game_id: int, session_id: int, elapsed_seconds: int) -> None:
     Game.objects.filter(pk=game_id).update(
         time_played_seconds=F('time_played_seconds') + elapsed_seconds,
         last_played_at=now,
+        updated_at=now,
     )
+    # PlaySession/Game .update() bypasses signals — publish manually so
+    # any open UI sees the stopped state immediately.
+    event_bus.publish('game.stopped', {'game_id': game_id})
 
 
 def _find_pid_by_exe(target_exe: str, exclude_pids: set[int] = frozenset()) -> int | None:
@@ -323,6 +330,8 @@ def launch_and_track(game, exe_override: str | None = None,
     with _lock:
         _active[game.pk] = handle
     thread.start()
+    from library.services import event_bus
+    event_bus.publish('game.running', {'game_id': game.pk})
     log.info('launched game %s pid %s session %s (override=%s, track=%s)',
              game.pk, proc.pid, session.pk, exe_override, track_exe)
     return handle

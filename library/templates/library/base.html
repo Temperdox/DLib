@@ -12,6 +12,7 @@
     {% csrf_token %}
     {% block body %}{% endblock %}
     <script src="{% static 'js/app.js' %}"></script>
+    <script src="{% static 'js/events.js' %}"></script>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

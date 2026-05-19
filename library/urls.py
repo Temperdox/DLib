@@ -11,6 +11,7 @@ urlpatterns = [
 
     # HTMX/API endpoints
     path('api/games/add/', views.add_game, name='add_game'),
+    path('api/games/manual-add/', views.manual_add_game, name='manual_add_game'),
     path('api/games/<int:pk>/refresh/', views.refresh_metadata, name='refresh_metadata'),
     path('api/games/<int:pk>/set-folder/', views.set_install_folder, name='set_install_folder'),
     path('api/games/<int:pk>/set-exe/', views.set_executable, name='set_executable'),
@@ -41,5 +42,6 @@ urlpatterns = [
     path('api/v1/upsert/', views.api_upsert, name='api_upsert'),
     path('api/v1/link/', views.api_link, name='api_link'),
     path('api/v1/health/', views.api_health, name='api_health'),
-    path('api/changes/', views.api_changes, name='api_changes'),
+    path('api/v1/all-games/', views.api_all_games, name='api_all_games'),
+    path('api/events/', views.event_stream, name='event_stream'),
 ]

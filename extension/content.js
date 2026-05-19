@@ -438,7 +438,25 @@
 
             try {
                 const result = await enqueueAction(onClick);
-                if (result && result.ok === false) {
+                if (result && result.ok === false && result.queued) {
+                    // Offline but the SW captured the intent in the outbox.
+                    // Treat as "tentatively done" — the optimistic cache patch
+                    // already updated the SW's view; show a soft success.
+                    btn.classList.remove('dlib-action-btn-loading');
+                    btn.classList.add('dlib-action-btn-ok');
+                    btn.textContent = '⌛ Queued';
+                    btn.title = 'DLib is offline — will sync when it comes back.';
+                    showToast('Saved offline — will sync when DLib is back.', 'info');
+                    scan({ requeryAll: true });
+                    setTimeout(() => {
+                        if (btn.isConnected) {
+                            btn.classList.remove('dlib-action-btn-ok');
+                            btn.textContent = originalText;
+                            btn.disabled = false;
+                            btn.title = '';
+                        }
+                    }, 1600);
+                } else if (result && result.ok === false) {
                     const errMsg = result.error || 'request failed';
                     btn.classList.remove('dlib-action-btn-loading');
                     btn.classList.add('dlib-action-btn-failed');

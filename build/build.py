@@ -86,8 +86,8 @@ def build(clean: bool) -> int:
         '--company-name=DLib',
         '--product-name=DLib',
         '--file-description=DLib - DLsite game library',
-        '--product-version=0.1.14',
-        '--file-version=0.1.14.0',
+        '--product-version=0.1.15',
+        '--file-version=0.1.15.0',
         f'--output-dir={OUTPUT_DIR}',
         '--output-filename=DLib.exe',
         '--remove-output',     # delete intermediate build files
@@ -122,16 +122,20 @@ def build(clean: bool) -> int:
         print(f'\nBuild FAILED (exit {proc.returncode}).')
         return proc.returncode
 
-    exe = OUTPUT_DIR / 'run_app.dist' / 'DLib.exe'
+    # Nuitka names the dist directory after the entry script (run_app.dist).
+    # Always rename it to DLib.dist so the output path matches the exe name
+    # — otherwise users get tricked into running a stale DLib.dist left
+    # behind from an older build.
+    old = OUTPUT_DIR / 'run_app.dist'
+    new = OUTPUT_DIR / 'DLib.dist'
+    if old.exists():
+        if new.exists():
+            shutil.rmtree(new)
+        old.rename(new)
+    exe = new / 'DLib.exe'
     if not exe.exists():
-        # Nuitka names the dist folder after the entry script; rename for clarity.
-        old = OUTPUT_DIR / 'run_app.dist'
-        new = OUTPUT_DIR / 'DLib.dist'
-        if old.exists():
-            if new.exists():
-                shutil.rmtree(new)
-            old.rename(new)
-            exe = new / 'DLib.exe'
+        print(f'\nBuild FAILED — expected exe not found at {exe}.')
+        return 1
     print(f'\nBuild OK — {exe}')
     return 0
 

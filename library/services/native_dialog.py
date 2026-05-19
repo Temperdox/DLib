@@ -73,7 +73,18 @@ def pick_file(
     return path or None
 
 
-EXECUTABLE_FILETYPES = (
-    ('Executable', '*.exe' if sys.platform == 'win32' else '*'),
-    ('All files', '*.*'),
-)
+if sys.platform == 'win32':
+    EXECUTABLE_FILETYPES = (
+        # First entry is the default — combined pattern so .exe and .html
+        # entrypoints are both visible without switching filters.
+        ('Game launcher', '*.exe *.html *.htm *.bat *.cmd'),
+        ('Executable', '*.exe'),
+        ('HTML game', '*.html *.htm'),
+        ('All files', '*.*'),
+    )
+else:
+    EXECUTABLE_FILETYPES = (
+        ('Game launcher', '*.html *.htm *.sh *.x86_64 *.x86'),
+        ('HTML game', '*.html *.htm'),
+        ('All files', '*'),
+    )

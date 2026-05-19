@@ -9,6 +9,9 @@ const cacheRow = document.getElementById('cache-row');
 const cacheText = document.getElementById('cache-text');
 const openBtn = document.getElementById('open-btn');
 const clearBtn = document.getElementById('clear-btn');
+const syncBtn = document.getElementById('sync-btn');
+const outboxRow = document.getElementById('outbox-row');
+const outboxText = document.getElementById('outbox-text');
 
 async function pingServer() {
     for (const base of API_BASES) {
@@ -84,18 +87,58 @@ async function refreshAll() {
         return;
     }
     if (!stats.count) {
-        cacheText.textContent = 'Cache: empty';
+        cacheText.textContent = result
+            ? 'Cache: empty — syncing…'
+            : 'Cache: empty';
         cacheRow.className = 'row checking';
+        // If we're online but the cache is empty, the SW hasn't run its
+        // initial sync yet (or it's still in flight). Kick one now so the
+        // user sees progress instead of staring at "empty".
+        if (result) {
+            sendBg({ type: 'full_sync' }).then(() => refreshAll());
+        }
     } else {
-        const age = stats.newest_at
-            ? fmtAge(Date.now() - stats.newest_at) + ' ago'
-            : 'unknown';
+        const synced = stats.last_full_sync_at
+            ? ' · last full sync ' + fmtAge(Date.now() - stats.last_full_sync_at) + ' ago'
+            : '';
         cacheText.textContent =
             'Cache: ' + stats.count + ' games · '
-            + fmtBytes(stats.bytes) + ' · newest ' + age;
+            + fmtBytes(stats.bytes) + synced;
         cacheRow.className = 'row ok';
     }
+
+    // Outbox: only shown when there's pending offline work.
+    const pending = stats.outbox_size || 0;
+    if (pending > 0) {
+        outboxRow.style.display = '';
+        outboxRow.className = result ? 'row checking' : 'row down';
+        outboxText.textContent = 'Pending: ' + pending
+            + ' offline ' + (pending === 1 ? 'write' : 'writes')
+            + (result ? ' — syncing…' : ' (will sync when online)');
+    } else {
+        outboxRow.style.display = 'none';
+    }
+    // Resync button: visible whenever the server is reachable so the user
+    // can force a refresh, plus when offline + queued writes need draining.
+    syncBtn.style.display = (result || pending > 0) ? '' : 'none';
 }
+
+syncBtn.addEventListener('click', async () => {
+    syncBtn.disabled = true;
+    const orig = syncBtn.textContent;
+    syncBtn.textContent = 'Syncing…';
+    const r = await sendBg({ type: 'outbox_drain' });
+    syncBtn.disabled = false;
+    syncBtn.textContent = orig;
+    if (r && !r.error) {
+        await refreshAll();
+        if (r.offline) {
+            alert('DLib is still offline. Pending writes will sync automatically when it comes back.');
+        }
+    } else {
+        alert('Sync failed: ' + (r && r.error ? r.error : 'unknown error'));
+    }
+});
 
 clearBtn.addEventListener('click', async () => {
     if (!confirm('Clear all cached DLib data? Pills on offline pages will disappear until the server is reachable again.')) return;

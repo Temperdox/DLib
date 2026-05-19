@@ -4,7 +4,7 @@
 {% block title %}DLib — Library{% endblock %}
 
 {% block body %}
-<div x-data="{ showAdd: false }">
+<div x-data="{ showAdd: false, showManual: false }">
     <header class="topbar">
         <a class="brand" href="{% url 'library:library' %}">
             <span class="dot"></span>
@@ -47,6 +47,10 @@
                 <path d="M12 5v14M5 12h14"/>
             </svg>
             Add Game
+        </button>
+        <button class="btn btn-ghost" @click="showManual = true"
+                title="Create a game entry from scratch (no URL fetch).">
+            ✎ Manual
         </button>
     </header>
 
@@ -91,36 +95,23 @@
         {% include 'library/partials/_add_game_modal.html' %}
     </div>
 
+    <!-- Manual entry modal — same mounting pattern. -->
+    <div x-show="showManual" x-cloak>
+        {% include 'library/partials/_manual_add_modal.html' %}
+    </div>
+
     <!-- Exe picker modal slot (filled in by HTMX) -->
     <div id="exe-picker-slot"></div>
-
-    <!-- Invisible poller: hits /api/changes/ every 4s, compares the JSON to
-         the last-seen value, and triggers a grid refresh when something
-         changed (e.g. browser extension just added a game). -->
-    <div style="display:none"
-         hx-get="{% url 'library:api_changes' %}"
-         hx-trigger="load delay:4s, every 4s"
-         hx-swap="none"
-         hx-on::after-request="dlibCheckChanges(event.detail.xhr)"></div>
 </div>
 
 <script>
-    // Auto-refresh: when /api/changes/ reports the library state has changed
-    // (added / edited / removed game from any source — including the browser
-    // extension), reload the grid in place. Filters are preserved.
-    let dlibLastChangeToken = null;
-    window.dlibCheckChanges = function (xhr) {
-        if (!xhr || xhr.status !== 200) return;
-        const token = xhr.responseText;
-        if (dlibLastChangeToken === null) {
-            dlibLastChangeToken = token;
-            return;
-        }
-        if (dlibLastChangeToken === token) return;
-        dlibLastChangeToken = token;
-        // Same value collection as setFilter() — keep grid swap respectful
-        // of whatever the user has typed / chosen.
-        const values = {
+    // Auto-refresh: the shared events.js opens an SSE feed (/api/events/)
+    // and re-broadcasts server pushes as DOM events. Any change to the
+    // library state — manual add, extension upsert, metadata refresh, tag
+    // toggle, favorite/bad/status flip, play session start/stop — refreshes
+    // the grid in place. Filters / sort / search input are preserved.
+    function dlibRefreshGrid() {
+        var values = {
             q: (document.querySelector('[name=q]') || {}).value || '',
             sort: (document.querySelector('[name=sort]') || {}).value || '',
             installed: (document.querySelector('[name=installed]') || {}).value || '',
@@ -133,7 +124,21 @@
             swap: 'outerHTML',
             values: values,
         });
-    };
+    }
+
+    // Coalesce bursts into a single grid refresh per 250ms window —
+    // without this, a bulk import would kick off N grid fetches.
+    var _dlibGridRefreshTimer = null;
+    function dlibScheduleGridRefresh() {
+        clearTimeout(_dlibGridRefreshTimer);
+        _dlibGridRefreshTimer = setTimeout(dlibRefreshGrid, 250);
+    }
+
+    ['dlib:game.added', 'dlib:game.changed', 'dlib:game.deleted',
+     'dlib:game.running', 'dlib:game.stopped', 'dlib:tags.changed',
+     'dlib:reconnect'].forEach(function (name) {
+        document.addEventListener(name, dlibScheduleGridRefresh);
+    });
 
     function setFilter(name, value) {
         var input = document.querySelector('[name=' + name + ']');

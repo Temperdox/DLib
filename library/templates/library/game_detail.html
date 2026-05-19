@@ -274,6 +274,71 @@
 <div id="exe-picker-slot"></div>
 
 <script>
+// SSE-driven auto-refresh. The shared events.js maintains a live feed
+// of all library state changes; we only care about ones for THIS game.
+//   game.changed  → reload the page so all partials show fresh state
+//   game.deleted  → bounce back to the library (this page is gone)
+//   game.running / game.stopped → just refresh the install-status pill
+// Manual local actions (favorite/bad buttons etc.) keep their explicit
+// hx-on::after-request="window.location.reload()" handlers so the user
+// sees feedback immediately without waiting for the round-trip event.
+(function () {
+    var currentPk = {{ game.pk }};
+
+    function isUserMidAction() {
+        // Any open modal means the user is partway through a multi-step
+        // action (exe picker, add-tag dialog, manual-add form, etc.). A
+        // reload would yank the modal out from under them — defer until
+        // it closes. We also skip while an HTMX request is in flight so
+        // we don't race the user's own action.
+        if (document.querySelector('.modal-backdrop')) return true;
+        if (document.querySelector('.htmx-request')) return true;
+        return false;
+    }
+
+    function reloadSoon() {
+        // Debounce so a burst of related changes (e.g. metadata refresh
+        // that saves the Game row then sets tags) yields one reload, not
+        // three. If the user is mid-action when the timer fires, defer
+        // the reload — the next change will retry, and the user's local
+        // hx-on::after-request handlers will still reload when their
+        // action completes.
+        clearTimeout(window._dlibDetailReloadTimer);
+        window._dlibDetailReloadTimer = setTimeout(function () {
+            if (isUserMidAction()) {
+                // Re-arm: check again in a second. Won't fire forever —
+                // the user closes the modal or completes the request,
+                // and the next reloadSoon() invocation succeeds.
+                window._dlibDetailReloadTimer = setTimeout(reloadSoon, 1000);
+                return;
+            }
+            window.location.reload();
+        }, 250);
+    }
+
+    document.addEventListener('dlib:game.changed', function (e) {
+        if (!e.detail || e.detail.game_id !== currentPk) return;
+        reloadSoon();
+    });
+    document.addEventListener('dlib:game.deleted', function (e) {
+        if (!e.detail || e.detail.game_id !== currentPk) return;
+        window.location.href = '{% url "library:library" %}';
+    });
+    document.addEventListener('dlib:game.running', function (e) {
+        if (!e.detail || e.detail.game_id !== currentPk) return;
+        // Refresh just the pill — full reload would lose any open modal.
+        htmx.ajax('GET', '/api/games/' + currentPk + '/install-status/', {
+            target: '#install-status-' + currentPk,
+            swap: 'outerHTML',
+        });
+    });
+    document.addEventListener('dlib:game.stopped', function (e) {
+        if (!e.detail || e.detail.game_id !== currentPk) return;
+        // Time played + last played are stamped by _finalize → reload.
+        reloadSoon();
+    });
+})();
+
 window.dlibAddTagWidget = function (gameId) {
     return {
         open: false,

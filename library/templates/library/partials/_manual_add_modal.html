@@ -1,0 +1,256 @@
+{% load library_extras %}
+<div class="modal-backdrop"
+     @click.self="showManual = false"
+     @keydown.escape.window="showManual = false">
+    <div class="modal modal-lg"
+         x-data="dlibManualAddForm()"
+         @gameAdded.window="showManual = false">
+        <div class="modal-header">
+            <div class="modal-title">Manual entry</div>
+            <button class="btn btn-ghost btn-icon" @click="showManual = false" title="Close">✕</button>
+        </div>
+
+        <form method="post" enctype="multipart/form-data"
+              action="{% url 'library:manual_add_game' %}"
+              hx-post="{% url 'library:manual_add_game' %}"
+              hx-encoding="multipart/form-data"
+              hx-target="#games-grid"
+              hx-swap="afterbegin"
+              hx-on::after-request="dlibHandleManualResponse(event, $data)">
+            {% csrf_token %}
+
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <!-- Required fields ------------------------------------ -->
+                <div class="field">
+                    <label class="field-label" for="manual-title">Title <span style="color: var(--red);">*</span></label>
+                    <input id="manual-title" class="text-input" type="text"
+                           name="title" required maxlength="500"
+                           autofocus>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="manual-creator">Author / Creator <span style="color: var(--red);">*</span></label>
+                    <input id="manual-creator" class="text-input" type="text"
+                           name="creator" required maxlength="200"
+                           placeholder="e.g. Coconut vine">
+                </div>
+                <div class="field">
+                    <label class="field-label" for="manual-primary-url">Site link <span style="color: var(--red);">*</span></label>
+                    <input id="manual-primary-url" class="text-input" type="url"
+                           name="primary_url" required
+                           placeholder="https://...">
+                </div>
+                <div class="field">
+                    <label class="field-label" for="manual-extra-urls">Extra links</label>
+                    <textarea id="manual-extra-urls" class="text-input" rows="2"
+                              name="extra_urls"
+                              placeholder="One URL per line (mirrors, related pages…)"></textarea>
+                </div>
+
+                <!-- Tags (custom chip widget) --------------------------- -->
+                <div class="field">
+                    <label class="field-label">Tags <span style="color: var(--red);">*</span> <span style="color: var(--text-dim); font-weight: normal;">(at least one)</span></label>
+                    <div class="tags-row" style="margin-bottom: 6px;">
+                        <template x-for="tag in tags" :key="tag">
+                            <span class="tag-pill genre">
+                                <span x-text="tag"></span>
+                                <button type="button" class="tag-remove" @click="removeTag(tag)">×</button>
+                            </span>
+                        </template>
+                        <em x-show="!tags.length" style="color: var(--text-dim);">No tags yet.</em>
+                    </div>
+                    <div class="add-tag-shell" style="position: relative;">
+                        <input type="text" class="text-input add-tag-input"
+                               x-model="tagQuery"
+                               @focus="loadTagSuggestions()"
+                               @input.debounce.150ms="loadTagSuggestions()"
+                               @keydown.enter.prevent="submitTag()"
+                               @keydown.arrow-down.prevent="moveSel(1)"
+                               @keydown.arrow-up.prevent="moveSel(-1)"
+                               placeholder="Type a tag and press Enter…"
+                               autocomplete="off">
+                        <ul class="suggest-list"
+                            x-show="tagSuggestions.length || tagQuery.trim()"
+                            x-cloak>
+                            <template x-for="(s, i) in tagSuggestions" :key="s">
+                                <li class="suggest-item"
+                                    :class="i === selIdx ? 'active' : ''"
+                                    @mouseenter="selIdx = i"
+                                    @click="addTag(s)" x-text="s"></li>
+                            </template>
+                            <li class="suggest-item suggest-new"
+                                x-show="canAddNewTag()"
+                                :class="tagSuggestions.length === selIdx ? 'active' : ''"
+                                @mouseenter="selIdx = tagSuggestions.length"
+                                @click="addTag(tagQuery.trim())">
+                                + Add new tag: "<span x-text="tagQuery.trim()"></span>"
+                            </li>
+                        </ul>
+                    </div>
+                    <!-- Hidden field carrying the actual submitted value. -->
+                    <input type="hidden" name="tags" :value="tags.join('\n')">
+                </div>
+
+                <!-- Cover image: URL or upload -------------------------- -->
+                <div class="field">
+                    <label class="field-label">Cover image</label>
+                    <div class="chip-group" style="margin-bottom: 6px;">
+                        <button type="button" class="chip"
+                                :class="coverMode === 'url' ? 'active' : ''"
+                                @click="coverMode = 'url'">URL</button>
+                        <button type="button" class="chip"
+                                :class="coverMode === 'upload' ? 'active' : ''"
+                                @click="coverMode = 'upload'">Upload</button>
+                    </div>
+                    <input class="text-input" type="url" name="cover_url"
+                           placeholder="https://..." x-show="coverMode === 'url'">
+                    <input class="text-input" type="file" name="cover_file"
+                           accept="image/*" x-show="coverMode === 'upload'" x-cloak>
+                </div>
+
+                <!-- Gallery images: list of URL-or-upload entries ------- -->
+                <div class="field">
+                    <label class="field-label">Gallery images</label>
+                    <div class="chip-group" style="margin-bottom: 6px;">
+                        <button type="button" class="chip"
+                                :class="galleryMode === 'url' ? 'active' : ''"
+                                @click="galleryMode = 'url'">URLs</button>
+                        <button type="button" class="chip"
+                                :class="galleryMode === 'upload' ? 'active' : ''"
+                                @click="galleryMode = 'upload'">Uploads</button>
+                    </div>
+                    <textarea class="text-input" rows="3" name="gallery_urls"
+                              x-show="galleryMode === 'url'"
+                              placeholder="One image URL per line"></textarea>
+                    <input class="text-input" type="file" name="gallery_files"
+                           accept="image/*" multiple
+                           x-show="galleryMode === 'upload'" x-cloak>
+                </div>
+
+                <!-- Optional metadata ----------------------------------- -->
+                <div class="field">
+                    <label class="field-label" for="manual-description">Description</label>
+                    <textarea id="manual-description" class="text-input" rows="4"
+                              name="description"></textarea>
+                </div>
+
+                <div class="field" style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <label class="field-label" for="manual-age">Age category</label>
+                        <select id="manual-age" class="select-input text-input" name="age_category">
+                            <option value="all_ages">All ages</option>
+                            <option value="r15">R15</option>
+                            <option value="r18" selected>R18</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1; min-width: 200px;">
+                        <label class="field-label" for="manual-work-type">Type / version</label>
+                        <input id="manual-work-type" class="text-input" type="text"
+                               name="work_type" maxlength="40"
+                               placeholder="e.g. RPGM Completed v1.0">
+                    </div>
+                </div>
+
+                <template x-if="error">
+                    <div class="error-text" x-text="error"></div>
+                </template>
+                <div class="htmx-indicator" style="color: var(--text-dim);">
+                    <span class="spinner"></span> Saving & downloading images…
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn" @click="showManual = false">Cancel</button>
+                <button type="submit" class="btn btn-primary"
+                        :disabled="!tags.length">Add game</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+window.dlibManualAddForm = function () {
+    return {
+        tags: [],
+        tagQuery: '',
+        tagSuggestions: [],
+        selIdx: -1,
+        coverMode: 'url',
+        galleryMode: 'url',
+        error: '',
+
+        canAddNewTag() {
+            const q = this.tagQuery.trim();
+            if (!q) return false;
+            if (this.tags.some(t => t.toLowerCase() === q.toLowerCase())) return false;
+            return !this.tagSuggestions.some(s => s.toLowerCase() === q.toLowerCase());
+        },
+        moveSel(dir) {
+            const len = this.tagSuggestions.length + (this.canAddNewTag() ? 1 : 0);
+            if (!len) return;
+            this.selIdx = (this.selIdx + dir + len) % len;
+        },
+        async loadTagSuggestions() {
+            // Re-use the same endpoint the per-game widget uses. We pass any
+            // existing game id so the URL routes correctly; the endpoint
+            // doesn't filter by game so the suggestions are global.
+            const q = encodeURIComponent(this.tagQuery.trim());
+            try {
+                const r = await fetch('/api/games/0/tag-suggestions/?q=' + q);
+                if (!r.ok) {
+                    // Fallback: use any game id we can find on the page (the
+                    // /0/ route 404s because pk=0 doesn't exist).
+                    const pkEl = document.querySelector('[id^=card-]');
+                    if (pkEl) {
+                        const pk = pkEl.id.replace('card-', '');
+                        const r2 = await fetch('/api/games/' + pk + '/tag-suggestions/?q=' + q);
+                        if (r2.ok) {
+                            const data = await r2.json();
+                            this.tagSuggestions = (data.tags || [])
+                                .filter(s => !this.tags.includes(s));
+                            this.selIdx = -1;
+                            return;
+                        }
+                    }
+                    this.tagSuggestions = [];
+                    return;
+                }
+                const data = await r.json();
+                this.tagSuggestions = (data.tags || []).filter(s => !this.tags.includes(s));
+                this.selIdx = -1;
+            } catch (_) {
+                this.tagSuggestions = [];
+            }
+        },
+        submitTag() {
+            const q = this.tagQuery.trim();
+            if (this.selIdx >= 0 && this.selIdx < this.tagSuggestions.length) {
+                this.addTag(this.tagSuggestions[this.selIdx]);
+            } else if (q) {
+                this.addTag(q);
+            }
+        },
+        addTag(name) {
+            if (!name) return;
+            const clean = name.trim();
+            if (!clean) return;
+            if (this.tags.some(t => t.toLowerCase() === clean.toLowerCase())) return;
+            this.tags.push(clean);
+            this.tagQuery = '';
+            this.tagSuggestions = [];
+            this.selIdx = -1;
+        },
+        removeTag(name) {
+            this.tags = this.tags.filter(t => t !== name);
+        },
+    };
+};
+
+window.dlibHandleManualResponse = function (event, ctx) {
+    if (event.detail.successful) {
+        ctx.error = '';
+    } else {
+        ctx.error = (event.detail.xhr && event.detail.xhr.responseText)
+            || 'Add failed';
+    }
+};
+</script>

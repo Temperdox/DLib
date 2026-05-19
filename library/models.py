@@ -53,7 +53,12 @@ class Game(models.Model):
 
     SOURCE_DLSITE = 'dlsite'
     SOURCE_F95ZONE = 'f95zone'
-    SOURCE_CHOICES = [(SOURCE_DLSITE, 'DLsite'), (SOURCE_F95ZONE, 'F95Zone')]
+    SOURCE_MANUAL = 'manual'
+    SOURCE_CHOICES = [
+        (SOURCE_DLSITE, 'DLsite'),
+        (SOURCE_F95ZONE, 'F95Zone'),
+        (SOURCE_MANUAL, 'Manual'),
+    ]
 
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SOURCE_DLSITE)
     source_id = models.CharField(max_length=40)
@@ -215,6 +220,7 @@ class AppSettings(models.Model):
 
     dlsite_install_root = models.CharField(max_length=1000, blank=True)
     f95zone_install_root = models.CharField(max_length=1000, blank=True)
+    manual_install_root = models.CharField(max_length=1000, blank=True)
     dlsite_username = models.CharField(max_length=200, blank=True)
     dlsite_password = models.CharField(max_length=200, blank=True)
     locale = models.CharField(max_length=10, default='en_US')
@@ -229,6 +235,8 @@ class AppSettings(models.Model):
         """Returns the raw configured value (may be empty)."""
         if source == Game.SOURCE_F95ZONE:
             return self.f95zone_install_root
+        if source == Game.SOURCE_MANUAL:
+            return self.manual_install_root
         return self.dlsite_install_root
 
     def effective_install_root_for(self, source: str) -> str:
@@ -244,7 +252,10 @@ class AppSettings(models.Model):
         configured = (self.install_root_for(source) or '').strip()
         if configured and Path(configured).is_dir():
             return configured
-        sub = 'F95Zone' if source == Game.SOURCE_F95ZONE else 'DLsite'
+        sub = {
+            Game.SOURCE_F95ZONE: 'F95Zone',
+            Game.SOURCE_MANUAL: 'Manual',
+        }.get(source, 'DLsite')
         default = Path.home() / 'DLib' / 'Games' / sub
         try:
             default.mkdir(parents=True, exist_ok=True)

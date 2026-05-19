@@ -147,13 +147,24 @@ class JsApi:
         if self._window is None:
             return ''
         directory = self._resolve_initial(initial, is_file=True)
-        # HTML is offered as its own filter so users can pick an .html
-        # entrypoint for browser-based games (RenPy web build, Twine, etc.).
-        file_types = (
-            ('Executable (*.exe)', 'HTML game (*.html;*.htm)', 'All files (*.*)')
-            if sys.platform == 'win32'
-            else ('HTML game (*.html;*.htm)', 'All files (*)')
-        )
+        # First filter in the tuple is the default — list a combined
+        # "Game launcher" pattern up front so .exe AND .html entrypoints
+        # (RenPy web build, Twine, RPG Maker MV/MZ web export, etc.) are
+        # both visible without the user having to switch filters.
+        if sys.platform == 'win32':
+            file_types = (
+                'Game launcher (*.exe;*.html;*.htm;*.bat;*.cmd)',
+                'Executable (*.exe)',
+                'HTML game (*.html;*.htm)',
+                'All files (*.*)',
+            )
+        else:
+            file_types = (
+                'Game launcher (*.html;*.htm;*.sh;*.x86_64;*.x86)',
+                'HTML game (*.html;*.htm)',
+                'Shell launcher (*.sh)',
+                'All files (*)',
+            )
         result = self._window.create_file_dialog(
             webview.OPEN_DIALOG,
             directory=directory,
@@ -526,7 +537,11 @@ class JsApi:
 def _serve(app, host: str, port: int) -> None:
     log.info('serving Django on %s:%s', host, port)
     try:
-        waitress_serve(app, host=host, port=port, threads=8, _quiet=True)
+        # 32 threads: each open SSE connection pins one thread for its
+        # lifetime, so the pool needs to absorb a few cycling pages
+        # without queueing requests. 8 was hitting the queue threshold
+        # after 4-5 fast navigations.
+        waitress_serve(app, host=host, port=port, threads=32, _quiet=True)
     except Exception:
         log.exception('waitress crashed')
 
