@@ -326,13 +326,27 @@
         try { console.log('[DLib]', ...args); } catch (_) {}
     }
 
-    function upsertViaSw(url, changes) {
+    // Build {source, source_id, title} for the current page's game so the SW
+    // can write an optimistic cache entry (and synthesize one for a game not
+    // yet in the library). Returns null if the URL isn't a recognized game.
+    function currentGameMeta(url) {
+        const cls = classify(url || location.href);
+        if (!cls) return null;
+        let title = '';
+        const og = document.querySelector('meta[property="og:title"]');
+        if (og && og.content) title = og.content.trim();
+        if (!title) title = (document.title || '').trim();
+        return { source: cls.source, source_id: cls.id, title: title || url };
+    }
+
+    function upsertViaSw(url, changes, meta) {
         const reqId = Math.random().toString(36).slice(2, 8);
-        dlog('upsert→SW', reqId, { url, changes });
+        dlog('upsert→SW', reqId, { url, changes, meta });
+        if (meta === undefined) meta = currentGameMeta(url);
         return new Promise((resolve) => {
             try {
                 chrome.runtime.sendMessage(
-                    { type: 'upsert', url, changes },
+                    { type: 'upsert', url, changes, meta },
                     (response) => {
                         if (chrome.runtime.lastError) {
                             dlog('upsert←SW LASTERROR', reqId,
@@ -398,13 +412,18 @@
         }
     }
 
-    function showToast(message, kind) {
+    function _toastHost() {
         let host = document.getElementById('dlib-toast-host');
         if (!host) {
             host = document.createElement('div');
             host.id = 'dlib-toast-host';
             document.documentElement.appendChild(host);
         }
+        return host;
+    }
+
+    function showToast(message, kind) {
+        const host = _toastHost();
         const toast = document.createElement('div');
         toast.className = 'dlib-toast dlib-toast-' + (kind || 'info');
         toast.textContent = message;
@@ -418,6 +437,74 @@
             setTimeout(() => toast.remove(), 300);
         }, 2400);
     }
+
+    // Persistent toast that stays until the user clicks ✕. Used for failures
+    // the user must see even if they navigated away from the game (e.g. a
+    // mark-as-bad that the app never confirmed). `dedupeKey` prevents stacking
+    // duplicates for the same game/url; returns the toast element.
+    function showPersistentToast(message, kind, dedupeKey) {
+        const host = _toastHost();
+        if (dedupeKey) {
+            const existing = host.querySelector(
+                '.dlib-toast-persistent[data-dlib-key="' + CSS.escape(dedupeKey) + '"]');
+            if (existing) existing.remove();
+        }
+        const toast = document.createElement('div');
+        toast.className = 'dlib-toast dlib-toast-persistent dlib-toast-' + (kind || 'error');
+        if (dedupeKey) toast.dataset.dlibKey = dedupeKey;
+
+        const text = document.createElement('span');
+        text.className = 'dlib-toast-text';
+        text.textContent = message;
+        toast.appendChild(text);
+
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'dlib-toast-close';
+        close.textContent = '✕';
+        close.addEventListener('click', () => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        });
+        toast.appendChild(close);
+
+        host.appendChild(toast);
+        // eslint-disable-next-line no-unused-expressions
+        toast.offsetWidth;
+        toast.classList.add('show');
+        return toast;
+    }
+
+    function dismissPersistentToast(dedupeKey) {
+        const host = document.getElementById('dlib-toast-host');
+        if (!host || !dedupeKey) return;
+        const el = host.querySelector(
+            '.dlib-toast-persistent[data-dlib-key="' + CSS.escape(dedupeKey) + '"]');
+        if (el) {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 300);
+        }
+    }
+
+    // The SW broadcasts these when an optimistic mark can't be confirmed by
+    // the app (mark_failed), recovers late (mark_recovered), or the cache
+    // changed and overlays should refresh (cache_updated).
+    chrome.runtime.onMessage.addListener((msg) => {
+        if (!msg || !msg.type) return;
+        if (msg.type === 'cache_updated') {
+            scan({ requeryAll: true });
+        } else if (msg.type === 'mark_failed') {
+            const name = msg.title || msg.url || 'game';
+            showPersistentToast(
+                'Game "' + name + '" failed to be ' + (msg.change || 'updated')
+                + ' on DLib: ' + (msg.url || ''),
+                'error', 'markfail:' + (msg.url || name));
+        } else if (msg.type === 'mark_recovered') {
+            const name = msg.title || msg.url || 'game';
+            dismissPersistentToast('markfail:' + (msg.url || name));
+            showToast('✓ "' + name + '" was saved after all', 'success');
+        }
+    });
 
     function makeActionBtn(label, kind, onClick, opts) {
         opts = opts || {};
@@ -456,6 +543,20 @@
                             btn.title = '';
                         }
                     }, 1600);
+                } else if (result && result.ok === false && result.timedOut) {
+                    // Optimistic mark wasn't confirmed by the app in time. The
+                    // SW already rolled the cache back and broadcast a
+                    // persistent mark_failed toast, so don't show a second
+                    // transient one here — just reset the button.
+                    btn.classList.remove('dlib-action-btn-loading');
+                    btn.classList.add('dlib-action-btn-failed');
+                    btn.textContent = '✕ Timed out';
+                    setTimeout(() => {
+                        btn.classList.remove('dlib-action-btn-failed');
+                        btn.textContent = originalText;
+                        btn.disabled = false;
+                    }, 2200);
+                    scan({ requeryAll: true });
                 } else if (result && result.ok === false) {
                     const errMsg = result.error || 'request failed';
                     btn.classList.remove('dlib-action-btn-loading');
@@ -512,62 +613,6 @@
         return bits.join('|');
     }
 
-    // Add the game first (no flags) then, only after the SW confirms the row
-    // exists, send a follow-up upsert with the requested flag. This is the
-    // belt-and-braces approach: even if the server's atomic add+mark path
-    // ever regresses, the extension still sees the game land in the library
-    // before flipping the flag. Both calls share the same queue slot so
-    // rapid clicks across buttons still serialize cleanly.
-    async function addThenFlag(url, flagChanges, flagLabel) {
-        dlog('addThenFlag START', { url, flagChanges, flagLabel });
-        const addResp = await upsertViaSw(url, {});
-        dlog('addThenFlag step1 done', {
-            ok: addResp && addResp.ok,
-            payload: addResp && addResp.payload,
-        });
-        if (!addResp || addResp.ok === false) return addResp;
-        const payload = addResp.payload || {};
-        if (!payload.found || !payload.source) {
-            dlog('addThenFlag ABORT — add returned no game payload');
-            return { ok: false, error: 'add returned no game payload' };
-        }
-        // Server already added — now apply the flag in a follow-up upsert.
-        // We re-send `url` (not source/source_id) because that's what the
-        // API expects; the server's _resolve_game_by_source will hit the
-        // row we just created, skip auto-add, and apply the flag.
-        const flagResp = await upsertViaSw(url, flagChanges);
-        dlog('addThenFlag step2 done', {
-            ok: flagResp && flagResp.ok,
-            payload: flagResp && flagResp.payload,
-            requested_flag: flagChanges,
-        });
-
-        // Sanity check: did the server payload actually reflect the flag we
-        // sent? If not, the flag was silently dropped server-side and the
-        // user would be stuck clicking again to "re-apply" it.
-        if (flagResp && flagResp.ok && flagResp.payload) {
-            for (const k of Object.keys(flagChanges)) {
-                if (flagResp.payload[k] !== flagChanges[k]) {
-                    dlog('addThenFlag MISMATCH! server payload does not reflect requested flag',
-                         { key: k, requested: flagChanges[k], got: flagResp.payload[k] });
-                    return {
-                        ok: false,
-                        error: 'server did not persist ' + k + '=' + flagChanges[k]
-                               + ' (got ' + flagResp.payload[k] + ')',
-                    };
-                }
-            }
-        }
-        if (!flagResp || flagResp.ok === false) {
-            const errMsg = (flagResp && flagResp.error) || 'unknown error';
-            return {
-                ok: false,
-                error: 'added to library but ' + flagLabel + ' failed: ' + errMsg,
-            };
-        }
-        return flagResp;
-    }
-
     function _buildToolbarButtons(host, payload) {
         const url = location.href;
         const inLibrary = !!(payload && payload.found);
@@ -582,12 +627,12 @@
                   toastWorking: 'Adding to library — fetching metadata, please wait…',
                   toastSuccess: '✓ Added to library' }));
             host.appendChild(makeActionBtn('★ Mark favorite', 'favorite',
-                () => addThenFlag(url, { is_favorite: true }, 'mark favorite'),
+                () => upsertViaSw(url, { is_favorite: true }),
                 { workingText: 'Adding + marking (30-60s)…',
                   toastWorking: 'Adding to library, then marking as favorite (~30-60s)…',
                   toastSuccess: '★ Added & marked as favorite' }));
             host.appendChild(makeActionBtn('⚠ Mark as bad', 'danger',
-                () => addThenFlag(url, { is_bad: true }, 'mark as bad'),
+                () => upsertViaSw(url, { is_bad: true }),
                 { workingText: 'Adding + marking (30-60s)…',
                   toastWorking: 'Adding to library, then marking as bad (~30-60s)…',
                   toastSuccess: '⚠ Added & marked as bad' }));

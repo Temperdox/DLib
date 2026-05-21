@@ -224,6 +224,99 @@ async function outboxSize() {
     });
 }
 
+async function cacheGetOne(key) {
+    const arr = await cacheGet([key]);
+    return arr[0] || null;
+}
+
+// Restore a prior cache entry (or delete the key if there was none) — used
+// to undo an optimistic write whose server confirmation never arrived.
+async function cacheRollback(key, priorEntry) {
+    if (priorEntry) {
+        const db = await openDb();
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(priorEntry);
+        await new Promise((resolve, reject) => {
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+        });
+    } else {
+        await cacheDelete([key]);
+    }
+}
+
+// Write an optimistic cache entry reflecting `changes`, creating a synthetic
+// payload when the game isn't cached yet (a not-in-library mark). Marked
+// with _pending so a later real payload (or rollback) supersedes it.
+async function cacheOptimisticUpsert(key, url, changes, meta) {
+    const db = await openDb();
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    const existing = await new Promise((resolve) => {
+        const r = store.get(key);
+        r.onsuccess = () => resolve(r.result || null);
+        r.onerror = () => resolve(null);
+    });
+    const payload = existing && existing.payload ? { ...existing.payload } : {
+        found: true,
+        source: (meta && meta.source) || null,
+        source_id: (meta && meta.source_id) || null,
+        url: url,
+        title: (meta && meta.title) || url,
+        is_installed: false,
+        is_running: false,
+        is_bad: false,
+        is_favorite: false,
+        status: 'unknown',
+        personal_rating: null,
+        time_played_seconds: 0,
+        library_url: null,
+    };
+    if ('is_bad' in changes) payload.is_bad = !!changes.is_bad;
+    if ('is_favorite' in changes) payload.is_favorite = !!changes.is_favorite;
+    if ('status' in changes) payload.status = changes.status;
+    if ('personal_rating' in changes) payload.personal_rating = changes.personal_rating;
+    store.put({ cache_key: key, payload: payload, cached_at: Date.now(), _pending: true });
+    await new Promise((resolve, reject) => {
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+// Broadcast a message to every f95zone / dlsite content script. Used to tell
+// overlays to refresh (cache_updated) or to surface a failure toast on
+// whichever tab is alive (mark_failed / mark_recovered). Host permissions
+// for those origins let us query + message the tabs without "tabs" perm.
+function broadcastToContentTabs(message) {
+    try {
+        chrome.tabs.query(
+            { url: ['https://f95zone.to/*', 'https://www.dlsite.com/*'] },
+            (tabs) => {
+                if (chrome.runtime.lastError) return;
+                for (const t of tabs || []) {
+                    if (t.id == null) continue;
+                    chrome.tabs.sendMessage(t.id, message, () => {
+                        // Swallow "no receiving end" for tabs without the
+                        // content script loaded yet.
+                        void chrome.runtime.lastError;
+                    });
+                }
+            }
+        );
+    } catch (_) { /* chrome.tabs unavailable — ignore */ }
+}
+
+function _changeLabel(changes) {
+    if (!changes) return 'updated';
+    if (changes.is_bad === true) return 'marked as bad';
+    if (changes.is_bad === false) return 'unmarked bad';
+    if (changes.is_favorite === true) return 'marked as favorite';
+    if (changes.is_favorite === false) return 'unfavorited';
+    if ('status' in changes) return 'set to ' + changes.status;
+    if ('personal_rating' in changes) return 'rated';
+    return 'updated';
+}
+
 // Optimistically merge a queued upsert into the cache so the overlay pill
 // reflects the user's intent immediately, even though the server hasn't
 // seen it yet. The cache_key needs source + source_id, but for a brand-new
@@ -505,15 +598,21 @@ async function handleLink(primaryUrl, aliasUrl, opts) {
 }
 
 
-async function handleUpsert(url, changes, opts) {
-    if (!url) return { ok: false, error: 'url required' };
-    const fromOutbox = opts && opts.fromOutbox;
+// How long to wait for the app to confirm an optimistic mark before we
+// roll it back and surface a failure toast. The server's add path can be
+// slow (DLsite metadata + sample downloads), so this is generous.
+const OPTIMISTIC_CONFIRM_MS = 30000;
+
+// Raw upsert fetch. Returns one of:
+//   { ok: true, payload }
+//   { ok: false, permanent: true, error }   (4xx — don't retry/queue)
+//   { ok: false, networkError: true, error } (all bases unreachable)
+async function _upsertFetch(url, changes) {
     const bases = activeBase
         ? [activeBase, ...API_BASES.filter(b => b !== activeBase)]
         : API_BASES;
     let lastErr = null;
     const body = { url, ...(changes || {}) };
-    console.log('[DLib SW] handleUpsert →', body);
     for (const base of bases) {
         try {
             const resp = await fetch(base + '/api/v1/upsert/', {
@@ -525,60 +624,125 @@ async function handleUpsert(url, changes, opts) {
             if (!resp.ok) {
                 const text = await resp.text();
                 lastErr = new Error('HTTP ' + resp.status + ' ' + text.slice(0, 200));
-                console.warn('[DLib SW] handleUpsert ← HTTP', resp.status,
-                             'base=' + base, 'body=' + text.slice(0, 400));
-                // 4xx is a permanent rejection — bad URL, invalid body. Don't
-                // queue it, replaying won't help.
                 if (resp.status >= 400 && resp.status < 500) {
-                    return { ok: false, error: lastErr.message, permanent: true };
+                    return { ok: false, permanent: true, error: lastErr.message };
                 }
                 continue;
             }
             const data = await resp.json();
-            console.log('[DLib SW] handleUpsert ←', {
-                status: resp.status,
-                base,
-                found: data && data.found,
-                is_bad: data && data.is_bad,
-                is_favorite: data && data.is_favorite,
-                created: data && data.created,
-                source: data && data.source,
-                source_id: data && data.source_id,
-            });
             activeBase = base;
             const wasDown = !serverReachable;
             serverReachable = true;
-            if (wasDown) scheduleProbe(false);
+            if (wasDown) {
+                scheduleProbe(false);
+                syncFullCache().catch(() => {});
+            }
             if (data && data.found && data.source && data.source_id) {
                 try { await cachePut([data]); } catch (e) { /* ignore */ }
             }
             return { ok: true, payload: data };
         } catch (e) {
-            console.warn('[DLib SW] handleUpsert THREW', String(e), 'base=' + base);
             lastErr = e;
         }
     }
-    // All bases unreachable → queue + optimistic-patch the cache so the
-    // overlay reflects the user's intent immediately.
-    if (!fromOutbox) {
+    return { ok: false, networkError: true, error: String(lastErr || 'unreachable') };
+}
+
+async function handleUpsert(url, changes, opts) {
+    if (!url) return { ok: false, error: 'url required' };
+    opts = opts || {};
+    const fromOutbox = opts.fromOutbox;
+    const meta = opts.meta || null;
+    const key = meta && meta.source && meta.source_id
+        ? meta.source + ':' + meta.source_id : null;
+    const hasChanges = changes && Object.keys(changes).length > 0;
+    const optimistic = !fromOutbox && key && hasChanges;
+    console.log('[DLib SW] handleUpsert →', { url, changes, optimistic });
+
+    // 1) Optimistic cache write so every open overlay reflects the user's
+    //    intent right away — and persists across navigation while the
+    //    server works.
+    let priorEntry = null;
+    if (optimistic) {
         try {
-            await outboxAdd('upsert', url, body);
-            await cacheOptimisticPatch(url, changes || {});
+            priorEntry = await cacheGetOne(key);
+            await cacheOptimisticUpsert(key, url, changes, meta);
+            broadcastToContentTabs({ type: 'cache_updated' });
         } catch (e) {
-            console.warn('[DLib SW] outbox enqueue (upsert) failed', e);
+            console.warn('[DLib SW] optimistic write failed', e);
         }
     }
-    if (serverReachable) {
-        serverReachable = false;
-        scheduleProbe(true);
+
+    const fetchPromise = _upsertFetch(url, changes);
+
+    // 2a) Non-optimistic path (outbox replay, or no derivable key): preserve
+    //     the original behavior.
+    if (!optimistic) {
+        const r = await fetchPromise;
+        if (r.ok) return r;
+        if (r.permanent) return r;
+        if (!fromOutbox) {
+            try {
+                await outboxAdd('upsert', url, { url, ...(changes || {}) });
+                await cacheOptimisticPatch(url, changes || {});
+            } catch (e) { /* ignore */ }
+        }
+        if (serverReachable) { serverReachable = false; scheduleProbe(true); }
+        return { ok: false, error: r.error, queued: !fromOutbox, offline: true };
     }
-    console.error('[DLib SW] handleUpsert FAILED all bases', String(lastErr));
-    return {
-        ok: false,
-        error: String(lastErr || 'unreachable'),
-        queued: !fromOutbox,
-        offline: true,
-    };
+
+    // 2b) Optimistic path: race the fetch against a confirmation timeout.
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+        timer = setTimeout(() => resolve({ _timeout: true }), OPTIMISTIC_CONFIRM_MS);
+    });
+    const raced = await Promise.race([fetchPromise, timeout]);
+    if (timer) clearTimeout(timer);
+
+    if (raced && raced._timeout) {
+        // No confirmation in time → roll back + alert. Keep the fetch alive:
+        // if it succeeds late, re-apply and clear the toast (mark_recovered).
+        await cacheRollback(key, priorEntry);
+        broadcastToContentTabs({ type: 'cache_updated' });
+        broadcastToContentTabs({
+            type: 'mark_failed', title: meta.title, url: url,
+            change: _changeLabel(changes),
+        });
+        fetchPromise.then(async (late) => {
+            if (late && late.ok && late.payload) {
+                try { await cachePut([late.payload]); } catch (e) { /* ignore */ }
+                broadcastToContentTabs({ type: 'cache_updated' });
+                broadcastToContentTabs({
+                    type: 'mark_recovered', title: meta.title, url: url,
+                });
+            }
+        }).catch(() => {});
+        return { ok: false, timedOut: true,
+                 error: 'timed out waiting for DLib confirmation' };
+    }
+
+    const r = raced;
+    if (r.ok) {
+        // _upsertFetch already cached the real payload. Refresh overlays.
+        broadcastToContentTabs({ type: 'cache_updated' });
+        return r;
+    }
+    if (r.permanent) {
+        await cacheRollback(key, priorEntry);
+        broadcastToContentTabs({ type: 'cache_updated' });
+        broadcastToContentTabs({
+            type: 'mark_failed', title: meta.title, url: url,
+            change: _changeLabel(changes),
+        });
+        return r;
+    }
+    // Network error → queue for replay and KEEP the optimistic state (the
+    // outbox will reconcile it). Mark offline.
+    try {
+        await outboxAdd('upsert', url, { url, ...(changes || {}) });
+    } catch (e) { /* ignore */ }
+    if (serverReachable) { serverReachable = false; scheduleProbe(true); }
+    return { ok: false, error: r.error, queued: true, offline: true };
 }
 
 // ---- Drain + probe --------------------------------------------------------
@@ -721,7 +885,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             return true;
         }
         if (msg.type === 'upsert') {
-            handleUpsert(msg.url, msg.changes)
+            handleUpsert(msg.url, msg.changes, { meta: msg.meta })
                 .then(sendResponse)
                 .catch(err => sendResponse({ ok: false, error: String(err) }));
             return true;
